@@ -38,12 +38,6 @@ func NewProducer(brokers []string, topic string) *Producer {
 	}
 }
 
-// JobMessage represents a job message for Kafka
-type JobMessage struct {
-	JobID   uuid.UUID `json:"job_id"`
-	TraceID string    `json:"trace_id,omitempty"`
-}
-
 // PublishJob publishes a job message to Kafka
 func (p *Producer) PublishJob(ctx context.Context, jobID uuid.UUID, traceID string) error {
 	msg := JobMessage{
