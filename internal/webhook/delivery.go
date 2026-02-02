@@ -27,11 +27,12 @@ type DeliveryService struct {
 	config       *config.Config
 	jobRepo      *database.JobRepository
 	deliveryRepo *database.WebhookDeliveryRepository
+	retryWorker  *RetryWorker
 }
 
 // NewDeliveryService creates a new webhook delivery service
 func NewDeliveryService(db *database.DB, cfg *config.Config) *DeliveryService {
-	return &DeliveryService{
+	service := &DeliveryService{
 		db: db,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
@@ -40,6 +41,21 @@ func NewDeliveryService(db *database.DB, cfg *config.Config) *DeliveryService {
 		jobRepo:      database.NewJobRepository(db),
 		deliveryRepo: database.NewWebhookDeliveryRepository(db),
 	}
+
+	// Initialize retry worker
+	service.retryWorker = NewRetryWorker(service, cfg)
+
+	return service
+}
+
+// Start starts the background retry worker
+func (s *DeliveryService) Start(ctx context.Context) {
+	s.retryWorker.Start(ctx)
+}
+
+// Stop stops the background retry worker
+func (s *DeliveryService) Stop() {
+	s.retryWorker.Stop()
 }
 
 // WebhookPayload represents the webhook payload
@@ -87,6 +103,7 @@ func (e *DeliveryError) IsRetryable() bool {
 }
 
 // DeliverWebhook delivers a webhook for a completed job
+// Makes one immediate attempt, schedules retries asynchronously if it fails
 func (s *DeliveryService) DeliverWebhook(ctx context.Context, jobID uuid.UUID) error {
 	// Get job details
 	job, err := s.jobRepo.GetByID(ctx, jobID)
@@ -135,110 +152,266 @@ func (s *DeliveryService) DeliverWebhook(ctx context.Context, jobID uuid.UUID) e
 		// Continue with delivery attempt
 	}
 
-	// Attempt delivery with retries
-	return s.deliverWithRetries(ctx, job, delivery, payload)
-}
+	// Make one immediate attempt (non-blocking for consumer)
+	delivery.Attempts = 1
+	now := time.Now()
+	delivery.LastAttemptAt = &now
 
-// deliverWithRetries attempts to deliver the webhook with exponential backoff
-func (s *DeliveryService) deliverWithRetries(ctx context.Context, job *models.Job, delivery *models.WebhookDelivery, payload WebhookPayload) error {
-	maxRetries := s.config.WebhookMaxRetries
-	// Ensure at least one delivery attempt (maxRetries=0 means try once without retries)
-	if maxRetries < 1 {
-		maxRetries = 1
-	}
-	baseDelay := s.config.WebhookRetryBaseDelay
+	err = s.sendWebhook(ctx, *job.WebhookURL, payload, job.WebhookSecret)
 
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		// Update attempt count
-		delivery.Attempts = attempt + 1
-		now := time.Now()
-		delivery.LastAttemptAt = &now
-
-		// Attempt delivery
-		err := s.sendWebhook(ctx, *job.WebhookURL, payload, job.WebhookSecret)
-
-		if err == nil {
-			// Success
-			delivery.Status = "sent"
-			if err := s.deliveryRepo.Update(ctx, delivery); err != nil {
-				log.Error().Err(err).Msg("Failed to update delivery record")
-			}
-
-			log.Info().
-				Str("job_id", job.ID.String()).
-				Str("url", *job.WebhookURL).
-				Int("attempts", delivery.Attempts).
-				Msg("Webhook delivered successfully")
-
-			return nil
-		}
-
-		// Log error
-		errMsg := err.Error()
-		delivery.LastError = &errMsg
-
-		log.Warn().
-			Err(err).
-			Str("job_id", job.ID.String()).
-			Str("url", *job.WebhookURL).
-			Int("attempt", attempt+1).
-			Int("max_retries", maxRetries).
-			Msg("Webhook delivery failed")
-
-		// Update delivery record
+	if err == nil {
+		// Success on first attempt
+		delivery.Status = "sent"
 		if err := s.deliveryRepo.Update(ctx, delivery); err != nil {
 			log.Error().Err(err).Msg("Failed to update delivery record")
 		}
 
-		// Check if error is retryable
-		var deliveryErr *DeliveryError
-		if errors.As(err, &deliveryErr) && !deliveryErr.IsRetryable() {
-			// Permanent error - don't retry
-			delivery.Status = "failed"
-			if err := s.deliveryRepo.Update(ctx, delivery); err != nil {
-				log.Error().Err(err).Msg("Failed to update delivery record")
-			}
+		log.Info().
+			Str("job_id", job.ID.String()).
+			Str("url", *job.WebhookURL).
+			Msg("Webhook delivered successfully on first attempt")
 
-			log.Error().
-				Err(err).
-				Str("job_id", job.ID.String()).
-				Str("url", *job.WebhookURL).
-				Int("status_code", deliveryErr.StatusCode).
-				Msg("Webhook delivery failed with permanent error - not retrying")
-
-			return fmt.Errorf("webhook delivery failed with permanent error (HTTP %d): %s", deliveryErr.StatusCode, deliveryErr.Message)
-		}
-
-		// Check if we should retry
-		if attempt < maxRetries-1 {
-			// Calculate backoff delay (exponential with jitter)
-			delay := baseDelay * time.Duration(1<<uint(attempt))
-			if delay > s.config.WebhookRetryMaxDelay {
-				delay = s.config.WebhookRetryMaxDelay
-			}
-
-			log.Info().
-				Dur("delay", delay).
-				Int("next_attempt", attempt+2).
-				Msg("Retrying webhook delivery")
-
-			// Wait before retry
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(delay):
-				// Continue to next attempt
-			}
-		}
+		return nil
 	}
 
-	// All retries exhausted
-	delivery.Status = "failed"
+	// First attempt failed - check if retryable
+	errMsg := err.Error()
+	delivery.LastError = &errMsg
+
+	var deliveryErr *DeliveryError
+	if errors.As(err, &deliveryErr) && !deliveryErr.IsRetryable() {
+		// Permanent error - don't schedule retries
+		delivery.Status = "failed"
+		if err := s.deliveryRepo.Update(ctx, delivery); err != nil {
+			log.Error().Err(err).Msg("Failed to update delivery record")
+		}
+
+		log.Error().
+			Err(err).
+			Str("job_id", job.ID.String()).
+			Str("url", *job.WebhookURL).
+			Int("status_code", deliveryErr.StatusCode).
+			Msg("Webhook delivery failed with permanent error - not retrying")
+
+		// Return nil to not block consumer - error is logged and recorded
+		return nil
+	}
+
+	// Transient error - schedule for retry
+	delivery.Status = "pending"
 	if err := s.deliveryRepo.Update(ctx, delivery); err != nil {
 		log.Error().Err(err).Msg("Failed to update delivery record")
 	}
 
-	return fmt.Errorf("webhook delivery failed after %d attempts", maxRetries)
+	log.Warn().
+		Err(err).
+		Str("job_id", job.ID.String()).
+		Str("url", *job.WebhookURL).
+		Msg("Webhook delivery failed on first attempt - scheduled for retry")
+
+	// Return nil to not block consumer - retries will be handled by background worker
+	return nil
+}
+
+// RetryWorker handles background retry of failed webhook deliveries
+type RetryWorker struct {
+	service  *DeliveryService
+	config   *config.Config
+	stopChan chan struct{}
+	ticker   *time.Ticker
+}
+
+// NewRetryWorker creates a new retry worker
+func NewRetryWorker(service *DeliveryService, cfg *config.Config) *RetryWorker {
+	return &RetryWorker{
+		service:  service,
+		config:   cfg,
+		stopChan: make(chan struct{}),
+	}
+}
+
+// Start starts the retry worker
+func (w *RetryWorker) Start(ctx context.Context) {
+	// Check for pending deliveries every 10 seconds
+	w.ticker = time.NewTicker(10 * time.Second)
+
+	go func() {
+		log.Info().Msg("Retry worker started")
+
+		for {
+			select {
+			case <-ctx.Done():
+				log.Info().Msg("Retry worker context cancelled, stopping")
+				return
+			case <-w.stopChan:
+				log.Info().Msg("Retry worker stopped")
+				return
+			case <-w.ticker.C:
+				w.processPendingDeliveries(ctx)
+			}
+		}
+	}()
+}
+
+// Stop stops the retry worker
+func (w *RetryWorker) Stop() {
+	if w.ticker != nil {
+		w.ticker.Stop()
+	}
+	close(w.stopChan)
+}
+
+// processPendingDeliveries processes pending webhook deliveries
+func (w *RetryWorker) processPendingDeliveries(ctx context.Context) {
+	// Get pending deliveries
+	deliveries, err := w.service.deliveryRepo.GetPendingDeliveries(ctx, 100)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to get pending deliveries")
+		return
+	}
+
+	if len(deliveries) == 0 {
+		return
+	}
+
+	log.Info().Int("count", len(deliveries)).Msg("Processing pending webhook deliveries")
+
+	for _, delivery := range deliveries {
+		// Check if it's time to retry based on exponential backoff
+		if !w.shouldRetry(delivery) {
+			continue
+		}
+
+		// Get job details
+		job, err := w.service.jobRepo.GetByID(ctx, delivery.JobID)
+		if err != nil {
+			log.Error().
+				Err(err).
+				Str("delivery_id", delivery.ID.String()).
+				Str("job_id", delivery.JobID.String()).
+				Msg("Failed to get job for delivery")
+			continue
+		}
+
+		// Build payload
+		finishedAt := time.Now()
+		if job.FinishedAt != nil {
+			finishedAt = *job.FinishedAt
+		}
+
+		payload := WebhookPayload{
+			JobID:        job.ID,
+			Status:       job.Status,
+			FinishedAt:   finishedAt,
+			OutputMarkup: job.OutputMarkup,
+		}
+
+		if job.ErrorCode != nil && job.ErrorMessage != nil {
+			payload.Error = &ErrorInfo{
+				Code:    *job.ErrorCode,
+				Message: *job.ErrorMessage,
+			}
+		}
+
+		// Attempt delivery
+		w.retryDelivery(ctx, job, delivery, payload)
+	}
+}
+
+// shouldRetry determines if a delivery should be retried based on exponential backoff
+func (w *RetryWorker) shouldRetry(delivery *models.WebhookDelivery) bool {
+	// Check if max retries exceeded
+	if delivery.Attempts >= w.config.WebhookMaxRetries {
+		// Mark as permanently failed
+		delivery.Status = "failed"
+		ctx := context.Background()
+		if err := w.service.deliveryRepo.Update(ctx, delivery); err != nil {
+			log.Error().Err(err).Msg("Failed to update delivery status to failed")
+		}
+
+		log.Error().
+			Str("delivery_id", delivery.ID.String()).
+			Str("job_id", delivery.JobID.String()).
+			Int("attempts", delivery.Attempts).
+			Msg("Webhook delivery failed permanently after max retries")
+
+		return false
+	}
+
+	// Calculate next retry time based on exponential backoff
+	if delivery.LastAttemptAt == nil {
+		return true // First retry
+	}
+
+	baseDelay := w.config.WebhookRetryBaseDelay
+	maxDelay := w.config.WebhookRetryMaxDelay
+
+	// Calculate backoff: baseDelay * 2^(attempt-1)
+	// attempt-1 because first attempt was immediate
+	backoffDelay := baseDelay * time.Duration(1<<uint(delivery.Attempts-1))
+	if backoffDelay > maxDelay {
+		backoffDelay = maxDelay
+	}
+
+	nextRetryTime := delivery.LastAttemptAt.Add(backoffDelay)
+	return time.Now().After(nextRetryTime)
+}
+
+// retryDelivery attempts to redeliver a webhook
+func (w *RetryWorker) retryDelivery(ctx context.Context, job *models.Job, delivery *models.WebhookDelivery, payload WebhookPayload) {
+	// Update attempt count
+	delivery.Attempts++
+	now := time.Now()
+	delivery.LastAttemptAt = &now
+
+	// Attempt delivery
+	err := w.service.sendWebhook(ctx, delivery.URL, payload, job.WebhookSecret)
+
+	if err == nil {
+		// Success
+		delivery.Status = "sent"
+		if err := w.service.deliveryRepo.Update(ctx, delivery); err != nil {
+			log.Error().Err(err).Msg("Failed to update delivery record")
+		}
+
+		log.Info().
+			Str("job_id", job.ID.String()).
+			Str("url", delivery.URL).
+			Int("attempts", delivery.Attempts).
+			Msg("Webhook delivered successfully after retry")
+
+		return
+	}
+
+	// Delivery failed
+	errMsg := err.Error()
+	delivery.LastError = &errMsg
+
+	log.Warn().
+		Err(err).
+		Str("job_id", job.ID.String()).
+		Str("url", delivery.URL).
+		Int("attempt", delivery.Attempts).
+		Int("max_retries", w.config.WebhookMaxRetries).
+		Msg("Webhook retry failed")
+
+	// Check if error is retryable
+	var deliveryErr *DeliveryError
+	if errors.As(err, &deliveryErr) && !deliveryErr.IsRetryable() {
+		// Permanent error - don't retry
+		delivery.Status = "failed"
+		log.Error().
+			Err(err).
+			Str("job_id", job.ID.String()).
+			Str("url", delivery.URL).
+			Int("status_code", deliveryErr.StatusCode).
+			Msg("Webhook delivery failed with permanent error - not retrying")
+	}
+
+	// Update delivery record
+	if err := w.service.deliveryRepo.Update(ctx, delivery); err != nil {
+		log.Error().Err(err).Msg("Failed to update delivery record")
+	}
 }
 
 // sendWebhook sends the webhook HTTP request

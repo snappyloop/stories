@@ -78,6 +78,10 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Start retry worker for failed webhook deliveries
+	deliveryService.Start(ctx)
+	defer deliveryService.Stop()
+
 	// Start Kafka consumer in goroutine
 	var wg sync.WaitGroup
 	wg.Add(1)

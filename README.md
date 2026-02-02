@@ -4,7 +4,7 @@ An API-first service that enriches text into segmented content with per-segment 
 
 ## Architecture
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system design and [REQUIREMENTS.md](./REQUIREMENTS.md) for functional requirements.
+See [doc/architecture.md](./doc/architecture.md) for detailed system design, [doc/requirements.md](./doc/requirements.md) for functional requirements, [doc/setup-and-development.md](./doc/setup-and-development.md) for setup, and [doc/webhooks.md](./doc/webhooks.md) for webhook delivery.
 
 ## Quick Start
 
