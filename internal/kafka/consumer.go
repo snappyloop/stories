@@ -78,11 +78,12 @@ func (c *Consumer) Start(ctx context.Context) error {
 					Str("topic", msg.Topic).
 					Int("partition", msg.Partition).
 					Int64("offset", msg.Offset).
-					Msg("Failed to process message")
-				// Continue processing other messages
+					Msg("Failed to process message - will retry on next poll")
+				// Don't commit - let Kafka redeliver the message
+				continue
 			}
 
-			// Commit message
+			// Commit message only on success
 			if err := c.reader.CommitMessages(ctx, msg); err != nil {
 				log.Error().Err(err).Msg("Failed to commit message")
 			}
