@@ -17,9 +17,20 @@ type Consumer struct {
 	handler MessageHandler
 }
 
-// MessageHandler processes Kafka messages
+// MessageHandler processes Kafka webhook messages
 type MessageHandler interface {
 	HandleMessage(ctx context.Context, msg *WebhookMessage) error
+}
+
+// JobMessageHandler processes Kafka job messages
+type JobMessageHandler interface {
+	HandleMessage(ctx context.Context, msg *JobMessage) error
+}
+
+// JobMessage represents an incoming job creation message
+type JobMessage struct {
+	JobID   uuid.UUID `json:"job_id"`
+	TraceID string    `json:"trace_id,omitempty"`
 }
 
 // WebhookMessage represents a webhook event message
@@ -27,17 +38,6 @@ type WebhookMessage struct {
 	JobID   uuid.UUID `json:"job_id"`
 	Event   string    `json:"event"` // "job_completed", "job_failed"
 	TraceID string    `json:"trace_id,omitempty"`
-}
-
-// JobMessage represents a job processing message
-type JobMessage struct {
-	JobID   uuid.UUID `json:"job_id"`
-	TraceID string    `json:"trace_id,omitempty"`
-}
-
-// JobHandler processes job messages
-type JobHandler interface {
-	HandleMessage(ctx context.Context, msg *JobMessage) error
 }
 
 // NewConsumer creates a new Kafka consumer
@@ -190,18 +190,18 @@ func (c *Consumer) Close() error {
 // JobConsumer wraps a Kafka consumer for job messages
 type JobConsumer struct {
 	reader  *kafka.Reader
-	handler JobHandler
+	handler JobMessageHandler
 }
 
 // NewJobConsumer creates a new Kafka consumer for job messages
-func NewJobConsumer(brokers []string, topic, groupID string, handler JobHandler) *JobConsumer {
+func NewJobConsumer(brokers []string, topic, groupID string, handler JobMessageHandler) *JobConsumer {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
 		Topic:          topic,
 		GroupID:        groupID,
 		MinBytes:       1,
 		MaxBytes:       10e6, // 10MB
-		CommitInterval: 1,
+		CommitInterval: 0,    // Disable auto-commit, using manual commits
 		StartOffset:    kafka.LastOffset,
 	})
 
@@ -224,7 +224,7 @@ func (c *JobConsumer) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info().Msg("Consumer context cancelled, stopping")
+			log.Info().Msg("Job consumer context cancelled, stopping")
 			return ctx.Err()
 		default:
 			msg, err := c.reader.FetchMessage(ctx)
@@ -237,17 +237,18 @@ func (c *JobConsumer) Start(ctx context.Context) error {
 			}
 
 			// Process message
-			if err := c.processJobMessage(ctx, msg); err != nil {
+			if err := c.processMessage(ctx, msg); err != nil {
 				log.Error().
 					Err(err).
 					Str("topic", msg.Topic).
 					Int("partition", msg.Partition).
 					Int64("offset", msg.Offset).
-					Msg("Failed to process message")
-				// Continue processing other messages
+					Msg("Failed to process message - will retry on next poll")
+				// Don't commit - let Kafka redeliver the message
+				continue
 			}
 
-			// Commit message
+			// Commit message only on success
 			if err := c.reader.CommitMessages(ctx, msg); err != nil {
 				log.Error().Err(err).Msg("Failed to commit message")
 			}
@@ -255,8 +256,8 @@ func (c *JobConsumer) Start(ctx context.Context) error {
 	}
 }
 
-// processJobMessage processes a single job message
-func (c *JobConsumer) processJobMessage(ctx context.Context, msg kafka.Message) error {
+// processMessage processes a single Kafka job message
+func (c *JobConsumer) processMessage(ctx context.Context, msg kafka.Message) error {
 	log.Debug().
 		Str("topic", msg.Topic).
 		Int("partition", msg.Partition).
