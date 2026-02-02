@@ -1,0 +1,197 @@
+# The Great Stories
+
+An API-first service that enriches text into segmented content with per-segment images and audio narration.
+
+## Architecture
+
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system design and [REQUIREMENTS.md](./REQUIREMENTS.md) for functional requirements.
+
+## Quick Start
+
+### Prerequisites
+
+- Docker & Docker Compose
+- Go 1.24+ (for local development without Docker)
+
+### Local Development with Docker
+
+1. Copy environment file:
+   ```bash
+   cp env.example .env
+   ```
+
+2. Add your Gemini API key to `.env`:
+   ```bash
+   GEMINI_API_KEY=your-actual-api-key
+   ```
+
+3. Start all services:
+   ```bash
+   docker-compose up -d
+   ```
+
+4. Run migrations:
+   ```bash
+   docker-compose exec api ./stories-api migrate
+   ```
+
+5. Access services:
+   - API: http://localhost:8080
+   - MinIO Console: http://localhost:9001 (minioadmin/minioadmin)
+   - Redpanda Console: http://localhost:19644
+
+### Create API Key
+
+```bash
+docker-compose exec postgres psql -U stories -d stories -c "
+INSERT INTO users (id, email) VALUES (gen_random_uuid(), 'test@example.com') RETURNING id;
+INSERT INTO api_keys (id, user_id, key_hash, status, quota_period, quota_chars) 
+VALUES (gen_random_uuid(), '<user_id_from_above>', crypt('test-key-123', gen_salt('bf')), 'active', 'monthly', 100000);
+"
+```
+
+### Test the API
+
+```bash
+curl -X POST http://localhost:8080/v1/jobs \
+  -H "Authorization: Bearer test-key-123" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "The solar system consists of the Sun and everything that orbits it...",
+    "type": "educational",
+    "pictures_count": 3,
+    "audio_type": "free_speech",
+    "webhook": {
+      "url": "https://your-webhook-endpoint.com/callback"
+    }
+  }'
+```
+
+## Project Structure
+
+```
+stories/
+├── cmd/
+│   ├── api/          # API server main
+│   ├── worker/       # Worker service main
+│   └── dispatcher/   # Webhook dispatcher main
+├── internal/
+│   ├── auth/         # Authentication & API key validation
+│   ├── quota/        # Quota management
+│   ├── jobs/         # Job management
+│   ├── segments/     # Segment processing
+│   ├── assets/       # Asset storage & retrieval
+│   ├── kafka/        # Kafka producer/consumer
+│   ├── storage/      # S3 storage interface
+│   ├── llm/          # LLM client (Gemini)
+│   └── markup/       # Output markup generation
+├── migrations/       # Database migrations
+├── compose.yaml      # Docker Compose for local dev
+├── Dockerfile        # Multi-stage Docker build
+└── README.md
+```
+
+## Development
+
+### Without Docker
+
+1. Install dependencies:
+   ```bash
+   go mod download
+   ```
+
+2. Setup local Postgres, Kafka, and MinIO (update .env accordingly)
+
+3. Run migrations:
+   ```bash
+   go run ./cmd/api migrate
+   ```
+
+4. Start services:
+   ```bash
+   # Terminal 1: API
+   go run ./cmd/api
+
+   # Terminal 2: Worker
+   go run ./cmd/worker
+
+   # Terminal 3: Dispatcher
+   go run ./cmd/dispatcher
+   ```
+
+### Testing
+
+```bash
+go test ./...
+```
+
+### Building
+
+```bash
+# Build all binaries
+make build
+
+# Build specific binary
+go build -o bin/api ./cmd/api
+go build -o bin/worker ./cmd/worker
+go build -o bin/dispatcher ./cmd/dispatcher
+```
+
+## Deployment
+
+### Kubernetes with Helm
+
+```bash
+cd ../charts/stories
+
+# Install
+helm install stories . -f values.yaml
+
+# Upgrade
+helm upgrade stories . -f values.yaml
+```
+
+See [charts/stories/README.md](../charts/stories/README.md) for Helm chart documentation.
+
+## API Documentation
+
+### Endpoints
+
+#### POST /v1/jobs
+Create a new enrichment job.
+
+**Request:**
+```json
+{
+  "text": "string (required, max 50k chars)",
+  "type": "educational|financial|fictional (required)",
+  "pictures_count": "integer (required, 1-20)",
+  "audio_type": "free_speech|podcast (required)",
+  "webhook": {
+    "url": "string (optional)",
+    "secret": "string (optional)"
+  }
+}
+```
+
+**Response (202 Accepted):**
+```json
+{
+  "job_id": "uuid",
+  "status": "queued",
+  "created_at": "timestamp"
+}
+```
+
+#### GET /v1/jobs/{job_id}
+Get job status and results.
+
+#### GET /v1/jobs
+List user's jobs (with pagination).
+
+#### GET /v1/assets/{asset_id}
+Get asset metadata and download URL.
+
+## License
+
+Proprietary - Gemini 3 Hackathon Project

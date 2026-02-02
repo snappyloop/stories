@@ -1,0 +1,138 @@
+package config
+
+import (
+	"os"
+	"strconv"
+	"time"
+)
+
+// Config holds application configuration
+type Config struct {
+	// Server
+	HTTPAddr string
+	LogLevel string
+	Timezone string
+
+	// Database
+	DatabaseURL string
+
+	// Kafka
+	KafkaBrokers       []string
+	KafkaConsumerGroup string
+	KafkaTopicJobs     string
+	KafkaTopicEvents   string
+	KafkaTopicWebhooks string
+
+	// S3/Storage
+	S3Endpoint  string
+	S3Region    string
+	S3Bucket    string
+	S3AccessKey string
+	S3SecretKey string
+	S3UseSSL    bool
+	S3PublicURL string
+
+	// Gemini API
+	GeminiAPIKey     string
+	GeminiModelPro   string
+	GeminiModelFlash string
+
+	// Processing
+	MaxInputLength        int
+	MaxPicturesCount      int
+	MaxConcurrentSegments int
+
+	// Quota
+	DefaultQuotaChars  int64
+	DefaultQuotaPeriod string
+
+	// Webhook
+	WebhookMaxRetries     int
+	WebhookRetryBaseDelay time.Duration
+	WebhookRetryMaxDelay  time.Duration
+
+	// Observability
+	SentryDSN             string
+	SentryEnvironment     string
+	SentryEnableTracing   bool
+	SentryWithBreadcrumbs bool
+}
+
+// Load loads configuration from environment variables
+func Load() *Config {
+	return &Config{
+		HTTPAddr: getEnv("HTTP_ADDR", ":8080"),
+		LogLevel: getEnv("LOG_LEVEL", "info"),
+		Timezone: getEnv("TZ", "UTC"),
+
+		DatabaseURL: getEnv("DATABASE_URL", ""),
+
+		KafkaBrokers:       []string{getEnv("KAFKA_BROKERS", "localhost:9092")},
+		KafkaConsumerGroup: getEnv("KAFKA_CONSUMER_GROUP", "stories-worker-main"),
+		KafkaTopicJobs:     getEnv("KAFKA_TOPIC_JOBS", "greatstories.jobs.v1"),
+		KafkaTopicEvents:   getEnv("KAFKA_TOPIC_EVENTS", "greatstories.events.v1"),
+		KafkaTopicWebhooks: getEnv("KAFKA_TOPIC_WEBHOOKS", "greatstories.webhooks.v1"),
+
+		S3Endpoint:  getEnv("S3_ENDPOINT", "http://localhost:9000"),
+		S3Region:    getEnv("S3_REGION", "us-east-1"),
+		S3Bucket:    getEnv("S3_BUCKET", "stories-assets"),
+		S3AccessKey: getEnv("S3_ACCESS_KEY", ""),
+		S3SecretKey: getEnv("S3_SECRET_KEY", ""),
+		S3UseSSL:    getEnvBool("S3_USE_SSL", false),
+		S3PublicURL: getEnv("S3_PUBLIC_URL", ""),
+
+		GeminiAPIKey:     getEnv("GEMINI_API_KEY", ""),
+		GeminiModelPro:   getEnv("GEMINI_MODEL_PRO", "gemini-2.0-flash-thinking-exp-01-21"),
+		GeminiModelFlash: getEnv("GEMINI_MODEL_FLASH", "gemini-2.0-flash-exp"),
+
+		MaxInputLength:        getEnvInt("MAX_INPUT_LENGTH", 50000),
+		MaxPicturesCount:      getEnvInt("MAX_PICTURES_COUNT", 20),
+		MaxConcurrentSegments: getEnvInt("MAX_CONCURRENT_SEGMENTS", 5),
+
+		DefaultQuotaChars:  int64(getEnvInt("DEFAULT_QUOTA_CHARS", 100000)),
+		DefaultQuotaPeriod: getEnv("DEFAULT_QUOTA_PERIOD", "monthly"),
+
+		WebhookMaxRetries:     getEnvInt("WEBHOOK_MAX_RETRIES", 10),
+		WebhookRetryBaseDelay: getEnvDuration("WEBHOOK_RETRY_BASE_DELAY", 30*time.Second),
+		WebhookRetryMaxDelay:  getEnvDuration("WEBHOOK_RETRY_MAX_DELAY", 24*time.Hour),
+
+		SentryDSN:             getEnv("SENTRY_DSN", ""),
+		SentryEnvironment:     getEnv("SENTRY_ENVIRONMENT", "development"),
+		SentryEnableTracing:   getEnvBool("SENTRY_ENABLE_TRACING", false),
+		SentryWithBreadcrumbs: getEnvBool("SENTRY_WITH_BREADCRUMBS", false),
+	}
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intVal, err := strconv.Atoi(value); err == nil {
+			return intVal
+		}
+	}
+	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if boolVal, err := strconv.ParseBool(value); err == nil {
+			return boolVal
+		}
+	}
+	return defaultValue
+}
+
+func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
+	if value := os.Getenv(key); value != "" {
+		if duration, err := time.ParseDuration(value); err == nil {
+			return duration
+		}
+	}
+	return defaultValue
+}
