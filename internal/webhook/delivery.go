@@ -142,6 +142,10 @@ func (s *DeliveryService) DeliverWebhook(ctx context.Context, jobID uuid.UUID) e
 // deliverWithRetries attempts to deliver the webhook with exponential backoff
 func (s *DeliveryService) deliverWithRetries(ctx context.Context, job *models.Job, delivery *models.WebhookDelivery, payload WebhookPayload) error {
 	maxRetries := s.config.WebhookMaxRetries
+	// Ensure at least one delivery attempt (maxRetries=0 means try once without retries)
+	if maxRetries < 1 {
+		maxRetries = 1
+	}
 	baseDelay := s.config.WebhookRetryBaseDelay
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
