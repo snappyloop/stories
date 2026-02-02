@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/rs/zerolog/log"
@@ -37,7 +38,10 @@ func NewConsumer(brokers []string, topic, groupID string, handler MessageHandler
 		MinBytes:       1,
 		MaxBytes:       10e6, // 10MB
 		CommitInterval: 0,    // Disable auto-commit, using manual commits
-		StartOffset:    kafka.LastOffset,
+		// Start from earliest message when no committed offset exists (first deployment).
+		// This ensures webhook events published before consumer startup are not lost.
+		// After initial consumption, consumer continues from last committed offset.
+		StartOffset: kafka.FirstOffset,
 	})
 
 	log.Info().
@@ -56,6 +60,13 @@ func NewConsumer(brokers []string, topic, groupID string, handler MessageHandler
 func (c *Consumer) Start(ctx context.Context) error {
 	log.Info().Msg("Starting Kafka consumer")
 
+	const (
+		maxRetries     = 10
+		baseDelay      = 1 * time.Second
+		maxDelay       = 5 * time.Minute
+		maxRetriesSkip = 50 // After this many retries, skip the message to prevent blocking
+	)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -71,24 +82,71 @@ func (c *Consumer) Start(ctx context.Context) error {
 				continue
 			}
 
-			// Process message
-			if err := c.processMessage(ctx, msg); err != nil {
+			// Process message with retries - block until success or max retries
+			var lastErr error
+			for attempt := 0; attempt < maxRetriesSkip; attempt++ {
+				// Process message
+				if err := c.processMessage(ctx, msg); err != nil {
+					lastErr = err
+
+					log.Error().
+						Err(err).
+						Str("topic", msg.Topic).
+						Int("partition", msg.Partition).
+						Int64("offset", msg.Offset).
+						Int("attempt", attempt+1).
+						Int("max_retries", maxRetriesSkip).
+						Msg("Failed to process message - will retry")
+
+					// Calculate exponential backoff delay
+					delay := baseDelay * time.Duration(1<<uint(min(attempt, maxRetries)))
+					if delay > maxDelay {
+						delay = maxDelay
+					}
+
+					// Wait before retry
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(delay):
+						continue
+					}
+				} else {
+					// Success - commit and move to next message
+					if err := c.reader.CommitMessages(ctx, msg); err != nil {
+						log.Error().Err(err).Msg("Failed to commit message")
+						// Even if commit fails, message was processed successfully
+						// The message may be redelivered on restart, but handler should be idempotent
+					}
+					break
+				}
+			}
+
+			// If we exhausted all retries, log as critical and skip to prevent blocking
+			if lastErr != nil {
 				log.Error().
-					Err(err).
+					Err(lastErr).
 					Str("topic", msg.Topic).
 					Int("partition", msg.Partition).
 					Int64("offset", msg.Offset).
-					Msg("Failed to process message - will retry on next poll")
-				// Don't commit - let Kafka redeliver the message
-				continue
-			}
+					Msg("CRITICAL: Message processing failed after all retries - SKIPPING MESSAGE")
 
-			// Commit message only on success
-			if err := c.reader.CommitMessages(ctx, msg); err != nil {
-				log.Error().Err(err).Msg("Failed to commit message")
+				// Commit the failed message to move past it
+				// This prevents one bad message from blocking the entire queue
+				if err := c.reader.CommitMessages(ctx, msg); err != nil {
+					log.Error().Err(err).Msg("Failed to commit skipped message")
+				}
 			}
 		}
 	}
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // processMessage processes a single Kafka message
