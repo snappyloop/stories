@@ -112,7 +112,9 @@ func (c *Consumer) Start(ctx context.Context) error {
 						continue
 					}
 				} else {
-					// Success - commit and move to next message
+					// Success - clear lastErr so post-loop check does not treat as failure
+					lastErr = nil
+					// Commit and move to next message
 					if err := c.reader.CommitMessages(ctx, msg); err != nil {
 						log.Error().Err(err).Msg("Failed to commit message")
 						// Even if commit fails, message was processed successfully

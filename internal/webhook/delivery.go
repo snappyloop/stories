@@ -446,8 +446,12 @@ func (s *DeliveryService) sendWebhook(ctx context.Context, url string, payload W
 	}
 	defer resp.Body.Close()
 
-	// Read response body for logging
-	respBody, _ := io.ReadAll(resp.Body)
+	// Read response body for logging with a size limit to avoid OOM from
+	// malicious or misconfigured webhook URLs returning huge responses.
+	const maxResponseBodyBytes = 64 * 1024 // 64KB
+	limitedReader := io.LimitReader(resp.Body, maxResponseBodyBytes)
+	respBody, _ := io.ReadAll(limitedReader)
+	io.Copy(io.Discard, resp.Body) // drain remainder so connection can be reused
 
 	// Check response status
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
