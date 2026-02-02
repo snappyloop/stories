@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,6 +57,35 @@ type ErrorInfo struct {
 	Message string `json:"message"`
 }
 
+// DeliveryError wraps webhook delivery errors with HTTP status code
+type DeliveryError struct {
+	StatusCode int
+	Message    string
+	Body       string
+}
+
+func (e *DeliveryError) Error() string {
+	return e.Message
+}
+
+// IsRetryable determines if an error should be retried
+func (e *DeliveryError) IsRetryable() bool {
+	// Retry on 5xx server errors
+	if e.StatusCode >= 500 && e.StatusCode < 600 {
+		return true
+	}
+	// Retry on 429 Too Many Requests
+	if e.StatusCode == 429 {
+		return true
+	}
+	// Don't retry on 4xx client errors (except 429)
+	if e.StatusCode >= 400 && e.StatusCode < 500 {
+		return false
+	}
+	// Retry on other errors (network issues, timeouts, etc.)
+	return true
+}
+
 // DeliverWebhook delivers a webhook for a completed job
 func (s *DeliveryService) DeliverWebhook(ctx context.Context, jobID uuid.UUID) error {
 	// Get job details
@@ -71,10 +101,15 @@ func (s *DeliveryService) DeliverWebhook(ctx context.Context, jobID uuid.UUID) e
 	}
 
 	// Create webhook payload
+	finishedAt := time.Now()
+	if job.FinishedAt != nil {
+		finishedAt = *job.FinishedAt
+	}
+
 	payload := WebhookPayload{
 		JobID:        job.ID,
 		Status:       job.Status,
-		FinishedAt:   time.Now(),
+		FinishedAt:   finishedAt,
 		OutputMarkup: job.OutputMarkup,
 	}
 
@@ -151,6 +186,25 @@ func (s *DeliveryService) deliverWithRetries(ctx context.Context, job *models.Jo
 			log.Error().Err(err).Msg("Failed to update delivery record")
 		}
 
+		// Check if error is retryable
+		var deliveryErr *DeliveryError
+		if errors.As(err, &deliveryErr) && !deliveryErr.IsRetryable() {
+			// Permanent error - don't retry
+			delivery.Status = "failed"
+			if err := s.deliveryRepo.Update(ctx, delivery); err != nil {
+				log.Error().Err(err).Msg("Failed to update delivery record")
+			}
+
+			log.Error().
+				Err(err).
+				Str("job_id", job.ID.String()).
+				Str("url", *job.WebhookURL).
+				Int("status_code", deliveryErr.StatusCode).
+				Msg("Webhook delivery failed with permanent error - not retrying")
+
+			return fmt.Errorf("webhook delivery failed with permanent error (HTTP %d): %s", deliveryErr.StatusCode, deliveryErr.Message)
+		}
+
 		// Check if we should retry
 		if attempt < maxRetries-1 {
 			// Calculate backoff delay (exponential with jitter)
@@ -210,6 +264,7 @@ func (s *DeliveryService) sendWebhook(ctx context.Context, url string, payload W
 	// Send request
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		// Network error - retryable
 		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -219,7 +274,11 @@ func (s *DeliveryService) sendWebhook(ctx context.Context, url string, payload W
 
 	// Check response status
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("webhook returned status %d: %s", resp.StatusCode, string(respBody))
+		return &DeliveryError{
+			StatusCode: resp.StatusCode,
+			Message:    fmt.Sprintf("webhook returned status %d", resp.StatusCode),
+			Body:       string(respBody),
+		}
 	}
 
 	return nil

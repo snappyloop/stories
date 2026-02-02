@@ -36,7 +36,7 @@ func NewConsumer(brokers []string, topic, groupID string, handler MessageHandler
 		GroupID:        groupID,
 		MinBytes:       1,
 		MaxBytes:       10e6, // 10MB
-		CommitInterval: 1,
+		CommitInterval: 0,    // Disable auto-commit, using manual commits
 		StartOffset:    kafka.LastOffset,
 	})
 
