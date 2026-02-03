@@ -18,6 +18,7 @@ import (
 	"github.com/snappy-loop/stories/internal/kafka"
 	"github.com/snappy-loop/stories/internal/services"
 	"github.com/snappy-loop/stories/internal/storage"
+	"github.com/snappy-loop/stories/migrations"
 )
 
 func main() {
@@ -43,6 +44,10 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed to connect to database")
 	}
 	defer db.Close()
+
+	if err := migrations.Run(db.SQLDB()); err != nil {
+		log.Fatal().Err(err).Msg("Failed to run migrations")
+	}
 
 	kafkaProducer := kafka.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopicJobs)
 	defer kafkaProducer.Close()

@@ -42,11 +42,7 @@ The Great Stories is an API-first service that enriches text into segmented cont
    docker-compose up -d
    ```
 
-4. Run migrations:
-   ```bash
-   docker-compose exec postgres psql -U stories -d stories -f /app/migrations/001_init.sql
-   ```
-   Or: `docker-compose exec api ./stories-api migrate` (if migrate command exists)
+4. Migrations run automatically when the API or dispatcher starts. No manual step needed.
 
 5. Access services:
    - API: http://localhost:8080
@@ -73,7 +69,7 @@ make test           # Run tests
 make up             # Start docker-compose
 make down           # Stop docker-compose
 make logs           # View logs
-make migrate        # Run migrations
+make migrate        # Run migrations manually (optional; API/dispatcher auto-run on startup)
 make psql           # Connect to PostgreSQL
 make dev-api        # Run API locally
 make dev-worker     # Run worker locally

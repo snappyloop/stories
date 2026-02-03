@@ -14,6 +14,7 @@ import (
 	"github.com/snappy-loop/stories/internal/database"
 	"github.com/snappy-loop/stories/internal/kafka"
 	"github.com/snappy-loop/stories/internal/webhook"
+	"github.com/snappy-loop/stories/migrations"
 )
 
 // WebhookHandler implements kafka.MessageHandler
@@ -57,6 +58,10 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed to connect to database")
 	}
 	defer db.Close()
+
+	if err := migrations.Run(db.SQLDB()); err != nil {
+		log.Fatal().Err(err).Msg("Failed to run migrations")
+	}
 
 	// Initialize webhook delivery service
 	deliveryService := webhook.NewDeliveryService(db, cfg)
