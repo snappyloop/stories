@@ -115,7 +115,8 @@ func (p *JobProcessor) processJobPipeline(ctx context.Context, job *models.Job) 
 		return fmt.Errorf("segmentation failed: %w", err)
 	}
 
-	// Save segments to database
+	// Save segments to database and keep their IDs for asset foreign keys
+	segmentIDs := make([]uuid.UUID, len(segments))
 	for i, seg := range segments {
 		segment := &models.Segment{
 			ID:          uuid.New(),
@@ -129,6 +130,7 @@ func (p *JobProcessor) processJobPipeline(ctx context.Context, job *models.Job) 
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
 		}
+		segmentIDs[i] = segment.ID
 
 		if err := p.segmentRepo.Create(ctx, segment); err != nil {
 			return fmt.Errorf("failed to save segment %d: %w", i, err)
@@ -151,7 +153,7 @@ func (p *JobProcessor) processJobPipeline(ctx context.Context, job *models.Job) 
 			Int("total", len(segments)).
 			Msg("Processing segment")
 
-		if err := p.processSegment(ctx, job, seg, i); err != nil {
+		if err := p.processSegment(ctx, job, seg, i, segmentIDs[i]); err != nil {
 			return fmt.Errorf("failed to process segment %d: %w", i, err)
 		}
 	}
@@ -171,8 +173,8 @@ func (p *JobProcessor) processJobPipeline(ctx context.Context, job *models.Job) 
 	return nil
 }
 
-// processSegment processes a single segment
-func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg *llm.Segment, idx int) error {
+// processSegment processes a single segment. segmentID is the database segment ID (used for asset FK).
+func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg *llm.Segment, idx int, segmentID uuid.UUID) error {
 	// Update segment status to running
 	if err := p.segmentRepo.UpdateStatus(ctx, job.ID, idx, "running"); err != nil {
 		log.Error().Err(err).Msg("Failed to update segment status")
@@ -199,11 +201,11 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 		return fmt.Errorf("audio upload failed: %w", err)
 	}
 
-	// Save audio asset
+	// Save audio asset (use DB segment ID for FK)
 	audioAsset := &models.Asset{
 		ID:        uuid.New(),
 		JobID:     job.ID,
-		SegmentID: &seg.ID,
+		SegmentID: &segmentID,
 		Kind:      "audio",
 		MimeType:  "audio/mpeg",
 		S3Bucket:  p.config.S3Bucket,
@@ -241,11 +243,11 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 		return fmt.Errorf("image upload failed: %w", err)
 	}
 
-	// Save image asset
+	// Save image asset (use DB segment ID for FK)
 	imageAsset := &models.Asset{
 		ID:        uuid.New(),
 		JobID:     job.ID,
-		SegmentID: &seg.ID,
+		SegmentID: &segmentID,
 		Kind:      "image",
 		MimeType:  "image/png",
 		S3Bucket:  p.config.S3Bucket,

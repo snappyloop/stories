@@ -10,11 +10,11 @@ import (
 func (r *JobRepository) UpdateStatus(ctx context.Context, jobID uuid.UUID, status string, errorCode, errorMessage *string) error {
 	query := `
 		UPDATE jobs
-		SET status = $1,
+		SET status = $1::job_status,
 		    error_code = $2,
 		    error_message = $3,
-		    started_at = CASE WHEN status = 'queued' AND $1 = 'running' THEN NOW() ELSE started_at END,
-		    finished_at = CASE WHEN $1 IN ('succeeded', 'failed', 'canceled') THEN NOW() ELSE finished_at END
+		    started_at = CASE WHEN status = 'queued' AND ($1::job_status = 'running') THEN NOW() ELSE started_at END,
+		    finished_at = CASE WHEN $1::job_status IN ('succeeded', 'failed', 'canceled') THEN NOW() ELSE finished_at END
 		WHERE id = $4
 	`
 
