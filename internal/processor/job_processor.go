@@ -3,6 +3,7 @@ package processor
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -142,20 +143,43 @@ func (p *JobProcessor) processJobPipeline(ctx context.Context, job *models.Job) 
 		Int("segments", len(segments)).
 		Msg("Segmentation complete")
 
-	// Step 2: Process each segment (with limited concurrency)
-	log.Info().Str("job_id", job.ID.String()).Msg("Step 2: Processing segments")
+	// Step 2: Process each segment asynchronously with limited concurrency
+	log.Info().Str("job_id", job.ID.String()).Msg("Step 2: Processing segments (async)")
 
-	// For now, process sequentially. In production, use semaphore for concurrency control
-	for i, seg := range segments {
-		log.Info().
-			Str("job_id", job.ID.String()).
-			Int("segment", i+1).
-			Int("total", len(segments)).
-			Msg("Processing segment")
+	sem := make(chan struct{}, p.config.MaxConcurrentSegments)
+	var wg sync.WaitGroup
+	var firstErr error
+	var mu sync.Mutex
 
-		if err := p.processSegment(ctx, job, seg, i, segmentIDs[i]); err != nil {
-			return fmt.Errorf("failed to process segment %d: %w", i, err)
-		}
+	for i := range segments {
+		idx := i
+		segCopy := segments[i]
+		segmentID := segmentIDs[i]
+		wg.Add(1)
+		go func(seg *llm.Segment) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			log.Info().
+				Str("job_id", job.ID.String()).
+				Int("segment", idx+1).
+				Int("total", len(segments)).
+				Msg("Processing segment")
+
+			if err := p.processSegment(ctx, job, seg, idx, segmentID); err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = fmt.Errorf("segment %d: %w", idx, err)
+				}
+				mu.Unlock()
+			}
+		}(segCopy)
+	}
+
+	wg.Wait()
+	if firstErr != nil {
+		return firstErr
 	}
 
 	// Step 3: Generate output markup

@@ -48,11 +48,18 @@ func NewHandler(
 	}
 }
 
-// Index serves the index page with forms to create a user and send a test request
+// Index serves the index page: list of all tasks (jobs) with statuses and view links
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(indexHTML))
+}
+
+// Generation serves the generation page: send test request and get job data forms
+func (h *Handler) Generation(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(generationHTML))
 }
 
 // CreateUser handles POST /users — creates a user and an API key, returns both (API key shown once)
@@ -415,7 +422,98 @@ const indexHTML = `<!DOCTYPE html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Great Stories — API</title>
+  <title>Great Stories — Tasks</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    section { margin-bottom: 1.5rem; }
+    label { display: block; margin-bottom: 0.25rem; font-weight: 500; }
+    input { padding: 0.5rem; margin-bottom: 0.75rem; border: 1px solid #ccc; border-radius: 4px; max-width: 360px; }
+    button { padding: 0.5rem 1rem; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #555; }
+    .tasks-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    .tasks-table th, .tasks-table td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e0e0e0; }
+    .tasks-table th { font-weight: 600; }
+    .tasks-table a { color: #333; }
+    .tasks-error { color: #c00; margin-top: 0.5rem; }
+    .tasks-empty { color: #666; margin-top: 1rem; }
+    .nav-link { margin-right: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Great Stories</h1>
+  <p><a href="/" class="nav-link">Tasks</a><a href="/generation" class="nav-link">Generation</a></p>
+
+  <section>
+    <label for="index-api-key">API key</label>
+    <input type="password" id="index-api-key" placeholder="API key" autocomplete="off">
+    <button type="button" id="index-load-tasks">Load tasks</button>
+    <p id="index-error" class="tasks-error" style="display:none;"></p>
+  </section>
+
+  <table id="index-tasks-table" class="tasks-table" style="display:none;">
+    <thead>
+      <tr><th>Job ID</th><th>Status</th><th>Created</th><th></th></tr>
+    </thead>
+    <tbody id="index-tasks-body"></tbody>
+  </table>
+  <p id="index-tasks-empty" class="tasks-empty" style="display:none;">No tasks yet. Enter API key and click Load tasks, or <a href="/generation">create a new job</a>.</p>
+
+  <script>
+    document.getElementById('index-load-tasks').addEventListener('click', async function() {
+      const apiKey = document.getElementById('index-api-key').value.trim();
+      const errorEl = document.getElementById('index-error');
+      const tableEl = document.getElementById('index-tasks-table');
+      const bodyEl = document.getElementById('index-tasks-body');
+      const emptyEl = document.getElementById('index-tasks-empty');
+      errorEl.style.display = 'none';
+      emptyEl.style.display = 'none';
+      if (!apiKey) {
+        errorEl.textContent = 'Please enter an API key.';
+        errorEl.style.display = 'block';
+        return;
+      }
+      try {
+        const res = await fetch('/v1/jobs', { headers: { 'Authorization': 'Bearer ' + apiKey } });
+        const data = await res.json();
+        if (!res.ok) {
+          errorEl.textContent = data.error || res.statusText || 'Failed to load tasks';
+          errorEl.style.display = 'block';
+          return;
+        }
+        const jobs = data.jobs || [];
+        bodyEl.innerHTML = '';
+        if (jobs.length === 0) {
+          emptyEl.style.display = 'block';
+          tableEl.style.display = 'none';
+        } else {
+          tableEl.style.display = 'table';
+          jobs.forEach(function(job) {
+            const tr = document.createElement('tr');
+            const id = job.id || job.job_id || '';
+            const status = job.status || '';
+            const created = job.created_at ? new Date(job.created_at).toLocaleString() : '';
+            tr.innerHTML = '<td><code style="font-size:0.85em">' + id + '</code></td><td>' + status + '</td><td>' + created + '</td><td><a href="/view/' + id + '">View</a></td>';
+            bodyEl.appendChild(tr);
+          });
+        }
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>
+`
+
+const generationHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Great Stories — Generation</title>
   <style>
     * { box-sizing: border-box; }
     body { font-family: system-ui, sans-serif; max-width: 560px; margin: 2rem auto; padding: 0 1rem; }
@@ -430,26 +528,23 @@ const indexHTML = `<!DOCTYPE html>
     .result { margin-top: 1rem; padding: 0.75rem; background: #f5f5f5; border-radius: 4px; font-size: 0.9rem; white-space: pre-wrap; word-break: break-all; }
     .error { background: #fee; color: #c00; }
     .poll-status { font-size: 0.85rem; color: #666; margin-bottom: 0.5rem; }
+    .get-job-loading { display: none; margin-bottom: 0.75rem; }
+    .get-job-loading.visible { display: block; }
+    .loading-dots::after { content: ''; animation: loading-dots 1.5s steps(4, end) infinite; }
+    @keyframes loading-dots { 0%, 20% { content: ''; } 40% { content: '.'; } 60% { content: '..'; } 80%, 100% { content: '...'; } }
+    .get-job-view-link { margin-left: 0.25rem; }
+    .nav-link { margin-right: 1rem; }
   </style>
 </head>
 <body>
-  <h1>Great Stories — API</h1>
-  <p>Create a user and send a test job request.</p>
-
-  <section>
-    <h2>Create user</h2>
-    <form id="create-user">
-      <label for="email">Email (optional)</label>
-      <input type="email" id="email" name="email" placeholder="you@example.com">
-      <button type="submit">Create user</button>
-    </form>
-    <div id="create-user-result" class="result" style="display:none;"></div>
-  </section>
+  <h1>Great Stories — Generation</h1>
+  <p><a href="/" class="nav-link">Tasks</a><a href="/generation" class="nav-link">Generation</a></p>
+  <p>Send a test job request and check job status.</p>
 
   <section>
     <h2>API key</h2>
     <label for="api-key">Use this key for both forms below</label>
-    <input type="password" id="api-key" name="api_key" placeholder="Paste api_key from above" autocomplete="off" data-1p-ignore>
+    <input type="password" id="api-key" name="api_key" placeholder="API key" autocomplete="off" data-1p-ignore>
   </section>
 
   <section>
@@ -477,7 +572,12 @@ const indexHTML = `<!DOCTYPE html>
 
   <section>
     <h2>Get job data</h2>
+    <div id="get-job-loading" class="get-job-loading">
+      <span class="loading-dots">Processing</span>
+      <p style="margin: 0.25rem 0 0 0; font-size: 0.85rem; color: #666;">Processing may take up to 10 minutes, depending on the text length.</p>
+    </div>
     <p id="get-job-poll-status" class="poll-status" style="display:none;"></p>
+    <span id="get-job-view-wrap" style="display:none;"><a id="get-job-view-link" href="#" class="get-job-view-link">View</a></span>
     <form id="get-job">
       <label for="job-id">Job ID</label>
       <input type="text" id="job-id" name="job_id" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000" required>
@@ -487,32 +587,6 @@ const indexHTML = `<!DOCTYPE html>
   </section>
 
   <script>
-    document.getElementById('create-user').addEventListener('submit', async function(e) {
-      e.preventDefault();
-      const resultEl = document.getElementById('create-user-result');
-      resultEl.style.display = 'block';
-      resultEl.classList.remove('error');
-      const email = document.getElementById('email').value.trim() || null;
-      try {
-        const res = await fetch('/users', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: email || null })
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          resultEl.textContent = 'Error: ' + (data.error || res.statusText);
-          resultEl.classList.add('error');
-          return;
-        }
-        resultEl.textContent = 'User created.\nuser_id: ' + data.user_id + '\napi_key: ' + data.api_key + '\n\n' + (data.message || '');
-        document.getElementById('api-key').value = data.api_key || '';
-      } catch (err) {
-        resultEl.textContent = 'Error: ' + err.message;
-        resultEl.classList.add('error');
-      }
-    });
-
     document.getElementById('test-request').addEventListener('submit', async function(e) {
       e.preventDefault();
       const resultEl = document.getElementById('test-request-result');
@@ -520,7 +594,7 @@ const indexHTML = `<!DOCTYPE html>
       resultEl.classList.remove('error');
       const apiKey = document.getElementById('api-key').value.trim();
       if (!apiKey) {
-        resultEl.textContent = 'Please enter an API key (create a user first).';
+        resultEl.textContent = 'Please enter an API key.';
         resultEl.classList.add('error');
         return;
       }
@@ -560,6 +634,7 @@ const indexHTML = `<!DOCTYPE html>
         getJobPollTimer = null;
       }
       document.getElementById('get-job-poll-status').style.display = 'none';
+      document.getElementById('get-job-loading').classList.remove('visible');
     }
     function fetchAndShowJob(apiKey, jobId, resultEl, pollStatusEl, isPoll) {
       return fetch('/v1/jobs/' + encodeURIComponent(jobId), {
@@ -592,6 +667,9 @@ const indexHTML = `<!DOCTYPE html>
       e.preventDefault();
       const resultEl = document.getElementById('get-job-result');
       const pollStatusEl = document.getElementById('get-job-poll-status');
+      const loadingEl = document.getElementById('get-job-loading');
+      const viewWrap = document.getElementById('get-job-view-wrap');
+      const viewLink = document.getElementById('get-job-view-link');
       resultEl.style.display = 'block';
       resultEl.classList.remove('error');
       const apiKey = document.getElementById('api-key').value.trim();
@@ -607,18 +685,25 @@ const indexHTML = `<!DOCTYPE html>
         return;
       }
       stopGetJobPoll();
+      viewWrap.style.display = 'none';
+      loadingEl.classList.add('visible');
       try {
         const status = await fetchAndShowJob(apiKey, jobId, resultEl, pollStatusEl, false);
+        viewLink.setAttribute('href', '/view/' + encodeURIComponent(jobId));
+        viewWrap.style.display = 'inline';
         if (status !== 'succeeded' && status !== 'failed' && status !== 'canceled') {
           getJobPollTimer = setInterval(function() {
             fetchAndShowJob(apiKey, jobId, resultEl, pollStatusEl, true).then(function(s) {
               if (s === 'succeeded' || s === 'failed' || s === 'canceled') stopGetJobPoll();
             });
           }, 5000);
+        } else {
+          loadingEl.classList.remove('visible');
         }
       } catch (err) {
         resultEl.textContent = 'Error: ' + err.message;
         resultEl.classList.add('error');
+        loadingEl.classList.remove('visible');
       }
     });
   </script>

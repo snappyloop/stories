@@ -76,7 +76,8 @@ func main() {
 
 	r := mux.NewRouter()
 	r.HandleFunc("/", h.Index).Methods("GET")
-	r.HandleFunc("/users", h.CreateUser).Methods("POST")
+	r.HandleFunc("/generation", h.Generation).Methods("GET")
+	// POST /users (CreateUser) not registered; handler kept for later use
 	r.HandleFunc("/view/asset/{id}", h.ViewAsset).Methods("GET")
 	r.HandleFunc("/view/{id}", h.ViewJob).Methods("GET")
 
