@@ -197,6 +197,7 @@ type Audio struct {
 	Size     int64
 	Duration float64
 	Model    string
+	MimeType string // e.g. "audio/wav" (TTS output is WAV per GEMINI_INTEGRATION.md)
 }
 
 // ImagePrompt represents an image generation prompt
@@ -211,6 +212,7 @@ type Image struct {
 	Size       int64
 	Resolution string
 	Model      string
+	MimeType   string // e.g. "image/png", "image/jpeg" (from Gemini blob.MIMEType)
 }
 
 // SegmentText segments text into logical parts
@@ -541,11 +543,16 @@ func (c *Client) generateAudioUnified(ctx context.Context, script, audioType str
 		return nil, fmt.Errorf("TTS returned no audio data")
 	}
 
-	// Convert to WAV if raw PCM
+	// Convert to WAV if raw PCM (per GEMINI_INTEGRATION.md: "Output: WAV format (converted from raw PCM)")
 	audioBytes := audioBuffer.Bytes()
+	outMime := lastMimeType
 	if lastMimeType != "" && strings.HasPrefix(lastMimeType, "audio/L") {
 		log.Debug().Str("mime_type", lastMimeType).Msg("Converting raw PCM to WAV")
 		audioBytes = convertToWAV(audioBytes, lastMimeType)
+		outMime = "audio/wav"
+	}
+	if outMime == "" {
+		outMime = "audio/wav"
 	}
 
 	size := int64(len(audioBytes))
@@ -556,7 +563,7 @@ func (c *Client) generateAudioUnified(ctx context.Context, script, audioType str
 		Str("caller", "GenerateAudio").
 		Int64("audio_size_bytes", size).
 		Str("voice", c.ttsVoice).
-		Str("mime_type", lastMimeType).
+		Str("mime_type", outMime).
 		Msg("TTS audio generated")
 
 	audio := &Audio{
@@ -564,6 +571,7 @@ func (c *Client) generateAudioUnified(ctx context.Context, script, audioType str
 		Size:     size,
 		Duration: duration,
 		Model:    c.modelTTS,
+		MimeType: outMime,
 	}
 
 	if err := c.validateAudio(audio); err != nil {
@@ -654,6 +662,7 @@ func (c *Client) placeholderAudio(script string) (*Audio, error) {
 		Size:     int64(len(audioBytes)),
 		Duration: duration,
 		Model:    c.modelTTS,
+		MimeType: "audio/wav",
 	}
 	log.Info().
 		Str("caller", "GenerateAudio").
@@ -828,11 +837,16 @@ func (c *Client) generateImageGenai(ctx context.Context, prompt string) (*Image,
 				Msg("Gemini response (image blob)")
 			imageBytes := blob.Data
 			size := int64(len(imageBytes))
+			mimeType := blob.MIMEType
+			if mimeType == "" {
+				mimeType = "image/png"
+			}
 			return &Image{
 				Data:       bytes.NewReader(imageBytes),
 				Size:       size,
 				Resolution: "1024x1024",
 				Model:      c.modelImage,
+				MimeType:   mimeType,
 			}, nil
 		}
 	}
@@ -867,6 +881,7 @@ func (c *Client) placeholderImage(prompt string) (*Image, error) {
 		Size:       int64(len(imageBytes)),
 		Resolution: "1024x1024",
 		Model:      c.modelPro,
+		MimeType:   "image/png",
 	}
 	log.Info().
 		Str("caller", "GenerateImage").
@@ -875,11 +890,4 @@ func (c *Client) placeholderImage(prompt string) (*Image, error) {
 		Str("model", c.modelPro).
 		Msg("Gemini response (image placeholder)")
 	return image, nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

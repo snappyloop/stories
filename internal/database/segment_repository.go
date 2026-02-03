@@ -50,3 +50,11 @@ func (r *SegmentRepository) UpdateStatus(ctx context.Context, jobID uuid.UUID, i
 
 	return nil
 }
+
+// DeleteByJobID deletes all segments for a job. Assets are cascade-deleted by the DB.
+// Used for idempotent restart when a job was left in "running" after a worker crash.
+func (r *SegmentRepository) DeleteByJobID(ctx context.Context, jobID uuid.UUID) error {
+	query := `DELETE FROM segments WHERE job_id = $1`
+	_, err := r.db.ExecContext(ctx, query, jobID)
+	return err
+}

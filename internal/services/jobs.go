@@ -123,19 +123,23 @@ func (s *JobService) GetJob(ctx context.Context, jobID, userID uuid.UUID) (*mode
 		return nil, fmt.Errorf("failed to get assets: %w", err)
 	}
 
-	assetResponses := make([]*models.AssetResponse, len(assets))
+	return &models.JobStatusResponse{
+		Job:      *job,
+		Segments: segments,
+		Assets:   s.buildAssetResponses(assets),
+	}, nil
+}
+
+// buildAssetResponses converts assets to response objects with download URLs.
+func (s *JobService) buildAssetResponses(assets []*models.Asset) []*models.AssetResponse {
+	out := make([]*models.AssetResponse, len(assets))
 	for i, a := range assets {
-		assetResponses[i] = &models.AssetResponse{
+		out[i] = &models.AssetResponse{
 			Asset:       *a,
 			DownloadURL: "/v1/assets/" + a.ID.String() + "/content",
 		}
 	}
-
-	return &models.JobStatusResponse{
-		Job:      *job,
-		Segments: segments,
-		Assets:   assetResponses,
-	}, nil
+	return out
 }
 
 // publicAssetURL returns the public URL for an asset (S3PublicURL from config or default S3 style)
@@ -160,17 +164,10 @@ func (s *JobService) GetJobByID(ctx context.Context, jobID uuid.UUID) (*models.J
 	if err != nil {
 		return nil, fmt.Errorf("failed to get assets: %w", err)
 	}
-	assetResponses := make([]*models.AssetResponse, len(assets))
-	for i, a := range assets {
-		assetResponses[i] = &models.AssetResponse{
-			Asset:       *a,
-			DownloadURL: "/v1/assets/" + a.ID.String() + "/content",
-		}
-	}
 	return &models.JobStatusResponse{
 		Job:      *job,
 		Segments: segments,
-		Assets:   assetResponses,
+		Assets:   s.buildAssetResponses(assets),
 	}, nil
 }
 

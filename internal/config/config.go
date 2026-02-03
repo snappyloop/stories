@@ -95,7 +95,7 @@ func Load() *Config {
 
 		MaxInputLength:        getEnvInt("MAX_INPUT_LENGTH", 50000),
 		MaxPicturesCount:      getEnvInt("MAX_PICTURES_COUNT", 20),
-		MaxConcurrentSegments: getEnvInt("MAX_CONCURRENT_SEGMENTS", 5),
+		MaxConcurrentSegments: clampMin(getEnvInt("MAX_CONCURRENT_SEGMENTS", 5), 1),
 
 		DefaultQuotaChars:  int64(getEnvInt("DEFAULT_QUOTA_CHARS", 100000)),
 		DefaultQuotaPeriod: getEnv("DEFAULT_QUOTA_PERIOD", "monthly"),
@@ -125,6 +125,14 @@ func getEnvInt(key string, defaultValue int) int {
 		}
 	}
 	return defaultValue
+}
+
+// clampMin returns v if v >= min, otherwise min. Used to ensure config values are in valid range.
+func clampMin(v, min int) int {
+	if v < min {
+		return min
+	}
+	return v
 }
 
 func getEnvBool(key string, defaultValue bool) bool {

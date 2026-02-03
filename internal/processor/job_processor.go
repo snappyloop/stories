@@ -48,6 +48,34 @@ func NewJobProcessor(
 	}
 }
 
+// audioExtension returns the file extension for an audio MIME type (e.g. "audio/wav" -> "wav").
+func audioExtension(mimeType string) string {
+	switch mimeType {
+	case "audio/mpeg":
+		return "mp3"
+	case "audio/wav", "audio/x-wav", "audio/wave":
+		return "wav"
+	default:
+		return "wav"
+	}
+}
+
+// imageExtension returns the file extension for an image MIME type (e.g. "image/jpeg" -> "jpg").
+func imageExtension(mimeType string) string {
+	switch mimeType {
+	case "image/jpeg", "image/jpg":
+		return "jpg"
+	case "image/png":
+		return "png"
+	case "image/webp":
+		return "webp"
+	case "image/gif":
+		return "gif"
+	default:
+		return "png"
+	}
+}
+
 // ProcessJob processes a job end-to-end
 func (p *JobProcessor) ProcessJob(ctx context.Context, jobID uuid.UUID) error {
 	log.Info().Str("job_id", jobID.String()).Msg("Starting job processing")
@@ -58,13 +86,28 @@ func (p *JobProcessor) ProcessJob(ctx context.Context, jobID uuid.UUID) error {
 		return fmt.Errorf("failed to get job: %w", err)
 	}
 
-	// Check if job is already processed
-	if job.Status == "succeeded" || job.Status == "failed" {
+	// Skip if job already reached a terminal state (idempotent for duplicate Kafka deliveries)
+	if job.Status == "succeeded" || job.Status == "failed" || job.Status == "canceled" {
 		log.Warn().
 			Str("job_id", jobID.String()).
 			Str("status", job.Status).
 			Msg("Job already processed")
 		return nil
+	}
+
+	// Idempotent restart: if status is "running", a previous worker may have crashed before
+	// finishing. Clear partial segments and assets so we don't create duplicates when we
+	// re-run the pipeline (segments table has no unique constraint on (job_id, idx)).
+	if job.Status == "running" {
+		log.Info().
+			Str("job_id", jobID.String()).
+			Msg("Job was running; clearing partial state for idempotent restart")
+		if err := p.segmentRepo.DeleteByJobID(ctx, jobID); err != nil {
+			return fmt.Errorf("failed to clear segments for restart: %w", err)
+		}
+		if err := p.jobRepo.UpdateMarkup(ctx, jobID, ""); err != nil {
+			log.Error().Err(err).Msg("Failed to clear job markup for restart")
+		}
 	}
 
 	// Update job status to running
@@ -146,7 +189,11 @@ func (p *JobProcessor) processJobPipeline(ctx context.Context, job *models.Job) 
 	// Step 2: Process each segment asynchronously with limited concurrency
 	log.Info().Str("job_id", job.ID.String()).Msg("Step 2: Processing segments (async)")
 
-	sem := make(chan struct{}, p.config.MaxConcurrentSegments)
+	concurrency := p.config.MaxConcurrentSegments
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 	var firstErr error
 	var mu sync.Mutex
@@ -226,11 +273,17 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 		Str("job_id", job.ID.String()).
 		Int("segment", idx).
 		Int64("audio_size_bytes", audio.Size).
+		Str("mime_type", audio.MimeType).
 		Msg("Audio from Gemini, uploading to S3")
 
-	// Upload audio to S3
-	audioKey := fmt.Sprintf("jobs/%s/segments/%d/audio.mp3", job.ID, idx)
-	if err := p.storageClient.Upload(ctx, audioKey, audio.Data, "audio/mpeg"); err != nil {
+	// TTS output is WAV (see GEMINI_INTEGRATION.md). Use actual format so Content-Type matches payload.
+	mimeType := audio.MimeType
+	if mimeType == "" {
+		mimeType = "audio/wav"
+	}
+	ext := audioExtension(mimeType)
+	audioKey := fmt.Sprintf("jobs/%s/segments/%d/audio.%s", job.ID, idx, ext)
+	if err := p.storageClient.Upload(ctx, audioKey, audio.Data, mimeType); err != nil {
 		p.segmentRepo.UpdateStatus(ctx, job.ID, idx, "failed")
 		return fmt.Errorf("audio upload failed: %w", err)
 	}
@@ -241,7 +294,7 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 		JobID:     job.ID,
 		SegmentID: &segmentID,
 		Kind:      "audio",
-		MimeType:  "audio/mpeg",
+		MimeType:  mimeType,
 		S3Bucket:  p.config.S3Bucket,
 		S3Key:     audioKey,
 		SizeBytes: audio.Size,
@@ -270,15 +323,23 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 		return fmt.Errorf("image generation failed: %w", err)
 	}
 
+	// Use actual format from Gemini so Content-Type and file extension match payload.
+	imgMimeType := image.MimeType
+	if imgMimeType == "" {
+		imgMimeType = "image/png"
+	}
+	imgExt := imageExtension(imgMimeType)
+	imageKey := fmt.Sprintf("jobs/%s/segments/%d/image.%s", job.ID, idx, imgExt)
+
 	log.Debug().
 		Str("job_id", job.ID.String()).
 		Int("segment", idx).
 		Int64("image_size_bytes", image.Size).
+		Str("mime_type", imgMimeType).
 		Msg("Image from Gemini, uploading to S3")
 
 	// Upload image to S3
-	imageKey := fmt.Sprintf("jobs/%s/segments/%d/image.png", job.ID, idx)
-	if err := p.storageClient.Upload(ctx, imageKey, image.Data, "image/png"); err != nil {
+	if err := p.storageClient.Upload(ctx, imageKey, image.Data, imgMimeType); err != nil {
 		p.segmentRepo.UpdateStatus(ctx, job.ID, idx, "failed")
 		return fmt.Errorf("image upload failed: %w", err)
 	}
@@ -289,7 +350,7 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 		JobID:     job.ID,
 		SegmentID: &segmentID,
 		Kind:      "image",
-		MimeType:  "image/png",
+		MimeType:  imgMimeType,
 		S3Bucket:  p.config.S3Bucket,
 		S3Key:     imageKey,
 		SizeBytes: image.Size,
@@ -370,13 +431,13 @@ func (p *JobProcessor) updateJobStatus(ctx context.Context, jobID uuid.UUID, sta
 	return p.jobRepo.UpdateStatus(ctx, jobID, status, errorCode, errorMessage)
 }
 
-// publishWebhookEvent publishes a webhook event to Kafka
+// publishWebhookEvent publishes a webhook event to Kafka so the dispatcher can deliver webhooks.
 func (p *JobProcessor) publishWebhookEvent(ctx context.Context, jobID uuid.UUID, event string) {
-	// TODO: Publish actual webhook event to Kafka
-	// This would use webhookProducer to publish to the webhooks topic
-
-	log.Info().
-		Str("job_id", jobID.String()).
-		Str("event", event).
-		Msg("Publishing webhook event")
+	if p.webhookProducer == nil {
+		log.Warn().Str("job_id", jobID.String()).Str("event", event).Msg("Webhook producer not configured, skipping publish")
+		return
+	}
+	if err := p.webhookProducer.PublishWebhook(ctx, jobID, event, ""); err != nil {
+		log.Error().Err(err).Str("job_id", jobID.String()).Str("event", event).Msg("Failed to publish webhook event to Kafka")
+	}
 }

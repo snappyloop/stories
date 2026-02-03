@@ -67,6 +67,37 @@ func (p *Producer) PublishJob(ctx context.Context, jobID uuid.UUID, traceID stri
 	return nil
 }
 
+// PublishWebhook publishes a webhook event message to Kafka (webhooks topic)
+func (p *Producer) PublishWebhook(ctx context.Context, jobID uuid.UUID, event, traceID string) error {
+	msg := WebhookMessage{
+		JobID:   jobID,
+		Event:   event,
+		TraceID: traceID,
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal webhook message: %w", err)
+	}
+
+	kafkaMsg := kafka.Message{
+		Key:   []byte(jobID.String()),
+		Value: data,
+	}
+
+	if err := p.writer.WriteMessages(ctx, kafkaMsg); err != nil {
+		return fmt.Errorf("failed to write webhook message to kafka: %w", err)
+	}
+
+	log.Info().
+		Str("job_id", jobID.String()).
+		Str("event", event).
+		Str("topic", p.topic).
+		Msg("Webhook event published to Kafka")
+
+	return nil
+}
+
 // Close closes the producer
 func (p *Producer) Close() error {
 	log.Info().Msg("Closing Kafka producer")
