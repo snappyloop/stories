@@ -429,6 +429,7 @@ const indexHTML = `<!DOCTYPE html>
     button:hover { background: #555; }
     .result { margin-top: 1rem; padding: 0.75rem; background: #f5f5f5; border-radius: 4px; font-size: 0.9rem; white-space: pre-wrap; word-break: break-all; }
     .error { background: #fee; color: #c00; }
+    .poll-status { font-size: 0.85rem; color: #666; margin-bottom: 0.5rem; }
   </style>
 </head>
 <body>
@@ -446,10 +447,14 @@ const indexHTML = `<!DOCTYPE html>
   </section>
 
   <section>
+    <h2>API key</h2>
+    <label for="api-key">Use this key for both forms below</label>
+    <input type="password" id="api-key" name="api_key" placeholder="Paste api_key from above" autocomplete="off" data-1p-ignore>
+  </section>
+
+  <section>
     <h2>Send test request</h2>
     <form id="test-request">
-      <label for="api-key">API key</label>
-      <input type="password" id="api-key" name="api_key" placeholder="Paste api_key from above" autocomplete="off">
       <label for="text">Text</label>
       <textarea id="text" name="text" placeholder="Short story or paragraph to enrich..." required></textarea>
       <label for="type">Type</label>
@@ -472,9 +477,8 @@ const indexHTML = `<!DOCTYPE html>
 
   <section>
     <h2>Get job data</h2>
+    <p id="get-job-poll-status" class="poll-status" style="display:none;"></p>
     <form id="get-job">
-      <label for="get-job-api-key">API key</label>
-      <input type="password" id="get-job-api-key" name="api_key" placeholder="Paste api_key" autocomplete="off">
       <label for="job-id">Job ID</label>
       <input type="text" id="job-id" name="job_id" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000" required>
       <button type="submit">Get job</button>
@@ -503,7 +507,6 @@ const indexHTML = `<!DOCTYPE html>
         }
         resultEl.textContent = 'User created.\nuser_id: ' + data.user_id + '\napi_key: ' + data.api_key + '\n\n' + (data.message || '');
         document.getElementById('api-key').value = data.api_key || '';
-        document.getElementById('get-job-api-key').value = data.api_key || '';
       } catch (err) {
         resultEl.textContent = 'Error: ' + err.message;
         resultEl.classList.add('error');
@@ -550,15 +553,51 @@ const indexHTML = `<!DOCTYPE html>
       }
     });
 
+    var getJobPollTimer = null;
+    function stopGetJobPoll() {
+      if (getJobPollTimer) {
+        clearInterval(getJobPollTimer);
+        getJobPollTimer = null;
+      }
+      document.getElementById('get-job-poll-status').style.display = 'none';
+    }
+    function fetchAndShowJob(apiKey, jobId, resultEl, pollStatusEl, isPoll) {
+      return fetch('/v1/jobs/' + encodeURIComponent(jobId), {
+        method: 'GET',
+        headers: { 'Authorization': 'Bearer ' + apiKey }
+      }).then(function(res) { return res.json().then(function(data) { return { res: res, data: data }; }); })
+        .then(function(_ref) {
+          var res = _ref.res, data = _ref.data;
+          if (!res.ok) {
+            resultEl.textContent = 'Error: ' + (data.error || res.statusText);
+            resultEl.classList.add('error');
+            if (isPoll) stopGetJobPoll();
+            return null;
+          }
+          resultEl.classList.remove('error');
+          resultEl.textContent = JSON.stringify(data, null, 2);
+          if (pollStatusEl && data.job) {
+            pollStatusEl.style.display = 'block';
+            pollStatusEl.textContent = 'Polling every 5s. Status: ' + (data.job.status || '');
+          }
+          return data.job ? data.job.status : null;
+        }).catch(function(err) {
+          resultEl.textContent = 'Error: ' + err.message;
+          resultEl.classList.add('error');
+          if (isPoll) stopGetJobPoll();
+          return null;
+        });
+    }
     document.getElementById('get-job').addEventListener('submit', async function(e) {
       e.preventDefault();
       const resultEl = document.getElementById('get-job-result');
+      const pollStatusEl = document.getElementById('get-job-poll-status');
       resultEl.style.display = 'block';
       resultEl.classList.remove('error');
-      const apiKey = document.getElementById('get-job-api-key').value.trim();
+      const apiKey = document.getElementById('api-key').value.trim();
       const jobId = document.getElementById('job-id').value.trim();
       if (!apiKey) {
-        resultEl.textContent = 'Please enter an API key.';
+        resultEl.textContent = 'Please enter an API key above.';
         resultEl.classList.add('error');
         return;
       }
@@ -567,18 +606,16 @@ const indexHTML = `<!DOCTYPE html>
         resultEl.classList.add('error');
         return;
       }
+      stopGetJobPoll();
       try {
-        const res = await fetch('/v1/jobs/' + encodeURIComponent(jobId), {
-          method: 'GET',
-          headers: { 'Authorization': 'Bearer ' + apiKey }
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          resultEl.textContent = 'Error: ' + (data.error || res.statusText);
-          resultEl.classList.add('error');
-          return;
+        const status = await fetchAndShowJob(apiKey, jobId, resultEl, pollStatusEl, false);
+        if (status !== 'succeeded' && status !== 'failed' && status !== 'canceled') {
+          getJobPollTimer = setInterval(function() {
+            fetchAndShowJob(apiKey, jobId, resultEl, pollStatusEl, true).then(function(s) {
+              if (s === 'succeeded' || s === 'failed' || s === 'canceled') stopGetJobPoll();
+            });
+          }, 5000);
         }
-        resultEl.textContent = JSON.stringify(data, null, 2);
       } catch (err) {
         resultEl.textContent = 'Error: ' + err.message;
         resultEl.classList.add('error');

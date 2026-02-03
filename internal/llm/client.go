@@ -775,7 +775,7 @@ func (c *Client) fallbackImagePrompt(text, inputType string) string {
 // Uses genai client and GenerateContent; when the SDK supports it, set model.ResponseModality = []string{"IMAGE"}.
 func (c *Client) GenerateImage(ctx context.Context, prompt string) (*Image, error) {
 	log.Debug().
-		Str("prompt", prompt[:min(50, len(prompt))]).
+		Str("prompt", prompt[:min(50, len(prompt))]+"...").
 		Msg("Generating image")
 
 	if c.genaiClient != nil {
