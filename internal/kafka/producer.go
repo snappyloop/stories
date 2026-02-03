@@ -38,12 +38,6 @@ func NewProducer(brokers []string, topic string) *Producer {
 	}
 }
 
-// JobMessage represents a job message for Kafka
-type JobMessage struct {
-	JobID   uuid.UUID `json:"job_id"`
-	TraceID string    `json:"trace_id,omitempty"`
-}
-
 // PublishJob publishes a job message to Kafka
 func (p *Producer) PublishJob(ctx context.Context, jobID uuid.UUID, traceID string) error {
 	msg := JobMessage{
@@ -69,6 +63,37 @@ func (p *Producer) PublishJob(ctx context.Context, jobID uuid.UUID, traceID stri
 		Str("job_id", jobID.String()).
 		Str("topic", p.topic).
 		Msg("Job message published to Kafka")
+
+	return nil
+}
+
+// PublishWebhook publishes a webhook event message to Kafka (webhooks topic)
+func (p *Producer) PublishWebhook(ctx context.Context, jobID uuid.UUID, event, traceID string) error {
+	msg := WebhookMessage{
+		JobID:   jobID,
+		Event:   event,
+		TraceID: traceID,
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal webhook message: %w", err)
+	}
+
+	kafkaMsg := kafka.Message{
+		Key:   []byte(jobID.String()),
+		Value: data,
+	}
+
+	if err := p.writer.WriteMessages(ctx, kafkaMsg); err != nil {
+		return fmt.Errorf("failed to write webhook message to kafka: %w", err)
+	}
+
+	log.Info().
+		Str("job_id", jobID.String()).
+		Str("event", event).
+		Str("topic", p.topic).
+		Msg("Webhook event published to Kafka")
 
 	return nil
 }

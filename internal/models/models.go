@@ -111,9 +111,9 @@ type CreateJobResponse struct {
 
 // JobStatusResponse represents detailed job status
 type JobStatusResponse struct {
-	Job      Job        `json:"job"`
-	Segments []*Segment `json:"segments"`
-	Assets   []*Asset   `json:"assets"`
+	Job      Job              `json:"job"`
+	Segments []*Segment       `json:"segments"`
+	Assets   []*AssetResponse `json:"assets"`
 }
 
 // AssetResponse represents asset metadata with download URL

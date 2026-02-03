@@ -17,9 +17,20 @@ type Consumer struct {
 	handler MessageHandler
 }
 
-// MessageHandler processes Kafka messages
+// MessageHandler processes Kafka webhook messages
 type MessageHandler interface {
 	HandleMessage(ctx context.Context, msg *WebhookMessage) error
+}
+
+// JobMessageHandler processes Kafka job messages
+type JobMessageHandler interface {
+	HandleMessage(ctx context.Context, msg *JobMessage) error
+}
+
+// JobMessage represents an incoming job creation message
+type JobMessage struct {
+	JobID   uuid.UUID `json:"job_id"`
+	TraceID string    `json:"trace_id,omitempty"`
 }
 
 // WebhookMessage represents a webhook event message
@@ -173,5 +184,106 @@ func (c *Consumer) processMessage(ctx context.Context, msg kafka.Message) error 
 // Close closes the consumer
 func (c *Consumer) Close() error {
 	log.Info().Msg("Closing Kafka consumer")
+	return c.reader.Close()
+}
+
+// JobConsumer wraps a Kafka consumer for job messages
+type JobConsumer struct {
+	reader  *kafka.Reader
+	handler JobMessageHandler
+}
+
+// NewJobConsumer creates a new Kafka consumer for job messages
+func NewJobConsumer(brokers []string, topic, groupID string, handler JobMessageHandler) *JobConsumer {
+	reader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:        brokers,
+		Topic:          topic,
+		GroupID:        groupID,
+		MinBytes:       1,
+		MaxBytes:       10e6, // 10MB
+		CommitInterval: 0,    // Disable auto-commit, using manual commits
+		StartOffset:    kafka.LastOffset,
+	})
+
+	log.Info().
+		Strs("brokers", brokers).
+		Str("topic", topic).
+		Str("group_id", groupID).
+		Msg("Kafka job consumer initialized")
+
+	return &JobConsumer{
+		reader:  reader,
+		handler: handler,
+	}
+}
+
+// Start starts consuming job messages
+func (c *JobConsumer) Start(ctx context.Context) error {
+	log.Info().Msg("Starting Kafka job consumer")
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info().Msg("Job consumer context cancelled, stopping")
+			return ctx.Err()
+		default:
+			msg, err := c.reader.FetchMessage(ctx)
+			if err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				log.Error().Err(err).Msg("Failed to fetch message")
+				continue
+			}
+
+			// Process message
+			if err := c.processMessage(ctx, msg); err != nil {
+				log.Error().
+					Err(err).
+					Str("topic", msg.Topic).
+					Int("partition", msg.Partition).
+					Int64("offset", msg.Offset).
+					Msg("Failed to process message - will retry on next poll")
+				// Don't commit - let Kafka redeliver the message
+				continue
+			}
+
+			// Commit message only on success
+			if err := c.reader.CommitMessages(ctx, msg); err != nil {
+				log.Error().Err(err).Msg("Failed to commit message")
+			}
+		}
+	}
+}
+
+// processMessage processes a single Kafka job message
+func (c *JobConsumer) processMessage(ctx context.Context, msg kafka.Message) error {
+	log.Debug().
+		Str("topic", msg.Topic).
+		Int("partition", msg.Partition).
+		Int64("offset", msg.Offset).
+		Msg("Processing job message")
+
+	// Parse message
+	var jobMsg JobMessage
+	if err := json.Unmarshal(msg.Value, &jobMsg); err != nil {
+		return fmt.Errorf("failed to unmarshal message: %w", err)
+	}
+
+	// Handle message
+	if err := c.handler.HandleMessage(ctx, &jobMsg); err != nil {
+		return fmt.Errorf("handler error: %w", err)
+	}
+
+	log.Info().
+		Str("job_id", jobMsg.JobID.String()).
+		Msg("Job message processed successfully")
+
+	return nil
+}
+
+// Close closes the job consumer
+func (c *JobConsumer) Close() error {
+	log.Info().Msg("Closing Kafka job consumer")
 	return c.reader.Close()
 }
