@@ -143,14 +143,6 @@ func (c *Consumer) Start(ctx context.Context) error {
 	}
 }
 
-// min returns the minimum of two integers
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // processMessage processes a single Kafka message
 func (c *Consumer) processMessage(ctx context.Context, msg kafka.Message) error {
 	log.Debug().

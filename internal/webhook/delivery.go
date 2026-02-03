@@ -288,11 +288,34 @@ func (w *RetryWorker) processPendingDeliveries(ctx context.Context) {
 		// Get job details
 		job, err := w.service.jobRepo.GetByID(ctx, delivery.JobID)
 		if err != nil {
-			log.Error().
-				Err(err).
-				Str("delivery_id", delivery.ID.String()).
-				Str("job_id", delivery.JobID.String()).
-				Msg("Failed to get job for delivery")
+			// Record this as a failed attempt so we don't retry forever (e.g. job deleted)
+			delivery.Attempts++
+			now := time.Now()
+			delivery.LastAttemptAt = &now
+			errMsg := fmt.Sprintf("job not found: %v", err)
+			delivery.LastError = &errMsg
+
+			if delivery.Attempts >= w.config.WebhookMaxRetries {
+				delivery.Status = "failed"
+				log.Error().
+					Err(err).
+					Str("delivery_id", delivery.ID.String()).
+					Str("job_id", delivery.JobID.String()).
+					Int("attempts", delivery.Attempts).
+					Msg("Failed to get job for delivery - marking as failed after max retries")
+			} else {
+				log.Warn().
+					Err(err).
+					Str("delivery_id", delivery.ID.String()).
+					Str("job_id", delivery.JobID.String()).
+					Int("attempts", delivery.Attempts).
+					Int("max_retries", w.config.WebhookMaxRetries).
+					Msg("Failed to get job for delivery - will retry")
+			}
+
+			if updateErr := w.service.deliveryRepo.Update(ctx, delivery); updateErr != nil {
+				log.Error().Err(updateErr).Msg("Failed to update delivery record after job lookup error")
+			}
 			continue
 		}
 
