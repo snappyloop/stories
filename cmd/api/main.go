@@ -77,6 +77,8 @@ func main() {
 	r := mux.NewRouter()
 	r.HandleFunc("/", h.Index).Methods("GET")
 	r.HandleFunc("/users", h.CreateUser).Methods("POST")
+	r.HandleFunc("/view/asset/{id}", h.ViewAsset).Methods("GET")
+	r.HandleFunc("/view/{id}", h.ViewJob).Methods("GET")
 
 	api := r.PathPrefix("/v1").Subrouter()
 	api.Use(authService.Middleware)

@@ -33,9 +33,13 @@ type Config struct {
 	S3PublicURL string
 
 	// Gemini API
-	GeminiAPIKey     string
-	GeminiModelPro   string
-	GeminiModelFlash string
+	GeminiAPIKey      string
+	GeminiAPIEndpoint string // if set, overrides default Gemini API base URL (e.g. http://host.docker.internal:31300/gemini)
+	GeminiModelPro    string
+	GeminiModelFlash  string
+	GeminiModelImage  string // image generation, e.g. gemini-3-pro-image-preview
+	GeminiModelTTS    string // TTS model, e.g. gemini-2.5-pro-preview-tts
+	GeminiTTSVoice    string // TTS voice name, e.g. Zephyr, Puck, Aoede
 
 	// Processing
 	MaxInputLength        int
@@ -81,9 +85,13 @@ func Load() *Config {
 		S3UseSSL:    getEnvBool("S3_USE_SSL", false),
 		S3PublicURL: getEnv("S3_PUBLIC_URL", ""),
 
-		GeminiAPIKey:     getEnv("GEMINI_API_KEY", ""),
-		GeminiModelPro:   getEnv("GEMINI_MODEL_PRO", "gemini-2.0-flash-thinking-exp-01-21"),
-		GeminiModelFlash: getEnv("GEMINI_MODEL_FLASH", "gemini-2.0-flash-exp"),
+		GeminiAPIKey:      getEnv("GEMINI_API_KEY", ""),
+		GeminiAPIEndpoint: getEnv("GEMINI_API_ENDPOINT", ""),
+		GeminiModelPro:    getEnv("GEMINI_MODEL_PRO", "gemini-2.0-flash-thinking-exp-01-21"),
+		GeminiModelFlash:  getEnv("GEMINI_MODEL_FLASH", "gemini-2.0-flash-exp"),
+		GeminiModelImage:  getEnv("GEMINI_MODEL_IMAGE", "gemini-3-pro-image-preview"),
+		GeminiModelTTS:    getEnv("GEMINI_MODEL_TTS", "gemini-2.5-pro-preview-tts"),
+		GeminiTTSVoice:    getEnv("GEMINI_TTS_VOICE", "Zephyr"),
 
 		MaxInputLength:        getEnvInt("MAX_INPUT_LENGTH", 50000),
 		MaxPicturesCount:      getEnvInt("MAX_PICTURES_COUNT", 20),

@@ -78,6 +78,10 @@ func main() {
 		cfg.GeminiAPIKey,
 		cfg.GeminiModelFlash,
 		cfg.GeminiModelPro,
+		cfg.GeminiModelImage,
+		cfg.GeminiModelTTS,
+		cfg.GeminiTTSVoice,
+		cfg.GeminiAPIEndpoint,
 	)
 
 	// Initialize Kafka producer for webhook events

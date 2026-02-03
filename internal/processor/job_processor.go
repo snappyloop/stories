@@ -187,12 +187,22 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 		return fmt.Errorf("narration generation failed: %w", err)
 	}
 
-	// Generate audio (placeholder - actual implementation would use Gemini/Google TTS)
+	// Generate audio (Gemini Pro)
 	audio, err := p.llmClient.GenerateAudio(ctx, script, job.AudioType)
 	if err != nil {
+		log.Error().Err(err).
+			Str("job_id", job.ID.String()).
+			Int("segment", idx).
+			Msg("Audio generation failed")
 		p.segmentRepo.UpdateStatus(ctx, job.ID, idx, "failed")
 		return fmt.Errorf("audio generation failed: %w", err)
 	}
+
+	log.Debug().
+		Str("job_id", job.ID.String()).
+		Int("segment", idx).
+		Int64("audio_size_bytes", audio.Size).
+		Msg("Audio from Gemini, uploading to S3")
 
 	// Upload audio to S3
 	audioKey := fmt.Sprintf("jobs/%s/segments/%d/audio.mp3", job.ID, idx)
@@ -235,6 +245,12 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 		p.segmentRepo.UpdateStatus(ctx, job.ID, idx, "failed")
 		return fmt.Errorf("image generation failed: %w", err)
 	}
+
+	log.Debug().
+		Str("job_id", job.ID.String()).
+		Int("segment", idx).
+		Int64("image_size_bytes", image.Size).
+		Msg("Image from Gemini, uploading to S3")
 
 	// Upload image to S3
 	imageKey := fmt.Sprintf("jobs/%s/segments/%d/image.png", job.ID, idx)

@@ -99,7 +99,7 @@ func (s *JobService) CreateJob(ctx context.Context, req *models.CreateJobRequest
 	}, nil
 }
 
-// GetJob retrieves a job with its segments and assets
+// GetJob retrieves a job with its segments and assets (assets include public URLs)
 func (s *JobService) GetJob(ctx context.Context, jobID, userID uuid.UUID) (*models.JobStatusResponse, error) {
 	job, err := s.jobRepo.GetByID(ctx, jobID)
 	if err != nil {
@@ -117,17 +117,89 @@ func (s *JobService) GetJob(ctx context.Context, jobID, userID uuid.UUID) (*mode
 		return nil, fmt.Errorf("failed to get segments: %w", err)
 	}
 
-	// Get assets
+	// Get assets and attach public URLs
 	assets, err := s.assetRepo.ListByJob(ctx, jobID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get assets: %w", err)
 	}
 
+	assetResponses := make([]*models.AssetResponse, len(assets))
+	for i, a := range assets {
+		assetResponses[i] = &models.AssetResponse{
+			Asset:       *a,
+			DownloadURL: "/v1/assets/" + a.ID.String() + "/content",
+		}
+	}
+
 	return &models.JobStatusResponse{
 		Job:      *job,
 		Segments: segments,
-		Assets:   assets,
+		Assets:   assetResponses,
 	}, nil
+}
+
+// publicAssetURL returns the public URL for an asset (S3PublicURL from config or default S3 style)
+func (s *JobService) publicAssetURL(bucket, key string) string {
+	if s.config.S3PublicURL != "" {
+		return fmt.Sprintf("%s/%s", s.config.S3PublicURL, key)
+	}
+	return fmt.Sprintf("https://%s.s3.amazonaws.com/%s", bucket, key)
+}
+
+// GetJobByID returns job with segments and assets by job ID (no ownership check, for view route)
+func (s *JobService) GetJobByID(ctx context.Context, jobID uuid.UUID) (*models.JobStatusResponse, error) {
+	job, err := s.jobRepo.GetByID(ctx, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("job not found: %w", err)
+	}
+	segments, err := s.segmentRepo.ListByJob(ctx, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get segments: %w", err)
+	}
+	assets, err := s.assetRepo.ListByJob(ctx, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get assets: %w", err)
+	}
+	assetResponses := make([]*models.AssetResponse, len(assets))
+	for i, a := range assets {
+		assetResponses[i] = &models.AssetResponse{
+			Asset:       *a,
+			DownloadURL: "/v1/assets/" + a.ID.String() + "/content",
+		}
+	}
+	return &models.JobStatusResponse{
+		Job:      *job,
+		Segments: segments,
+		Assets:   assetResponses,
+	}, nil
+}
+
+// GetAsset returns an asset by ID if the user owns the job it belongs to
+func (s *JobService) GetAsset(ctx context.Context, assetID, userID uuid.UUID) (*models.Asset, error) {
+	asset, err := s.assetRepo.GetByID(ctx, assetID)
+	if err != nil {
+		return nil, fmt.Errorf("asset not found: %w", err)
+	}
+	job, err := s.jobRepo.GetByID(ctx, asset.JobID)
+	if err != nil {
+		return nil, fmt.Errorf("job not found: %w", err)
+	}
+	if job.UserID != userID {
+		return nil, fmt.Errorf("access denied")
+	}
+	return asset, nil
+}
+
+// GetAssetByJobID returns an asset by ID if it belongs to the given job (for view route, no user check)
+func (s *JobService) GetAssetByJobID(ctx context.Context, assetID, jobID uuid.UUID) (*models.Asset, error) {
+	asset, err := s.assetRepo.GetByID(ctx, assetID)
+	if err != nil {
+		return nil, fmt.Errorf("asset not found: %w", err)
+	}
+	if asset.JobID != jobID {
+		return nil, fmt.Errorf("asset not found")
+	}
+	return asset, nil
 }
 
 // ListJobs lists jobs for a user

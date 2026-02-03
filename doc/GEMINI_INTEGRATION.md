@@ -27,6 +27,10 @@ llmClient := llm.NewClient(
     cfg.GeminiAPIKey,
     cfg.GeminiModelFlash,  // "gemini-2.0-flash-exp"
     cfg.GeminiModelPro,    // "gemini-2.0-flash-thinking-exp-01-21"
+    cfg.GeminiModelImage,  // "gemini-3-pro-image-preview" for image generation
+    cfg.GeminiModelTTS,    // "gemini-2.5-pro-preview-tts" for TTS
+    cfg.GeminiTTSVoice,    // "Zephyr", "Puck", "Aoede", etc.
+    cfg.GeminiAPIEndpoint, // optional: e.g. "http://host.docker.internal:31300/gemini"
 )
 ```
 
@@ -140,17 +144,21 @@ for each planet. Top-down perspective showing orbital paths."
 - Temperature: 0.8 (high creativity)
 - Max tokens: 300 (detailed but concise)
 
-### 4. Audio & Image Generation (Placeholders)
+### 4. Audio (TTS) & Image Generation
 
-**Current Status:**
-- `GenerateAudio()` - Returns placeholder data with metadata
-- `GenerateImage()` - Returns placeholder data with metadata
+**Audio:** Uses unified genai SDK (`google.golang.org/genai`) with native TTS.
+- Model: `gemini-2.5-pro-preview-tts` (supports `response_modalities: ["audio"]`)
+- Voices: Zephyr (default), Puck, Aoede, Kore, etc.
+- Output: WAV format (converted from raw PCM)
+- Tone hints: `[tone: professional]` for podcast, `[tone: warm, conversational]` for free_speech
 
-**TODO for Production:**
-- Integrate Google Cloud Text-to-Speech API
-- Integrate Imagen 3 or Gemini image generation
-- Handle binary data streaming
-- Add progress tracking for long generations
+Config: `GEMINI_MODEL_TTS`, `GEMINI_TTS_VOICE`.
+
+**Image:** We use `gemini-3-pro-image-preview` with `ResponseModality = []string{"IMAGE"}` and strict Blob response.
+
+Config: `GEMINI_MODEL_IMAGE`.
+
+**Fallback:** When TTS/image generation fails, placeholder data is returned so the pipeline can run.
 
 ## Error Handling & Fallbacks
 

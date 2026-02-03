@@ -2,6 +2,9 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"html"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -191,13 +194,26 @@ func (h *Handler) GetAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Get asset from database and verify ownership
-	_ = assetID
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 
-	writeJSONError(w, http.StatusNotImplemented, "not implemented yet")
+	asset, err := h.jobService.GetAsset(r.Context(), assetID, userID)
+	if err != nil {
+		log.Error().Err(err).Str("asset_id", assetID.String()).Msg("Failed to get asset")
+		writeJSONError(w, http.StatusNotFound, "asset not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, models.AssetResponse{
+		Asset:       *asset,
+		DownloadURL: "/v1/assets/" + assetID.String() + "/content",
+	})
 }
 
-// GetAssetContent handles GET /v1/assets/{id}/content
+// GetAssetContent handles GET /v1/assets/{id}/content — pass-through stream from S3
 func (h *Handler) GetAssetContent(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	assetID, err := uuid.Parse(vars["id"])
@@ -206,10 +222,154 @@ func (h *Handler) GetAssetContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Get asset from database, verify ownership, and stream from S3
-	_ = assetID
+	userID, err := auth.GetUserID(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 
-	writeJSONError(w, http.StatusNotImplemented, "not implemented yet")
+	asset, err := h.jobService.GetAsset(r.Context(), assetID, userID)
+	if err != nil {
+		log.Error().Err(err).Str("asset_id", assetID.String()).Msg("Failed to get asset")
+		writeJSONError(w, http.StatusNotFound, "asset not found")
+		return
+	}
+
+	if h.storage == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "storage not configured")
+		return
+	}
+
+	body, err := h.storage.GetObject(r.Context(), asset.S3Key)
+	if err != nil {
+		log.Error().Err(err).Str("asset_id", assetID.String()).Str("s3_key", asset.S3Key).Msg("Failed to get object from storage")
+		writeJSONError(w, http.StatusInternalServerError, "failed to load asset")
+		return
+	}
+	defer body.Close()
+
+	w.Header().Set("Content-Type", asset.MimeType)
+	if asset.SizeBytes > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(asset.SizeBytes, 10))
+	}
+	w.WriteHeader(http.StatusOK)
+	if _, err := io.Copy(w, body); err != nil {
+		log.Error().Err(err).Str("asset_id", assetID.String()).Msg("Failed to stream asset content")
+	}
+}
+
+// ViewJob handles GET /view/{id} — renders job as HTML with audio at start and image at end of each segment
+func (h *Handler) ViewJob(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	jobID, err := uuid.Parse(vars["id"])
+	if err != nil {
+		http.Error(w, "invalid job id", http.StatusBadRequest)
+		return
+	}
+
+	resp, err := h.jobService.GetJobByID(r.Context(), jobID)
+	if err != nil {
+		log.Error().Err(err).Str("job_id", jobID.String()).Msg("Failed to get job for view")
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+
+	// Build map: segment ID -> { audio asset, image asset }
+	type segmentAssets struct {
+		audio *models.AssetResponse
+		image *models.AssetResponse
+	}
+	bySegment := make(map[uuid.UUID]*segmentAssets)
+	for i := range resp.Assets {
+		a := resp.Assets[i]
+		if a.Asset.SegmentID == nil {
+			continue
+		}
+		sid := *a.Asset.SegmentID
+		if bySegment[sid] == nil {
+			bySegment[sid] = &segmentAssets{}
+		}
+		switch a.Asset.Kind {
+		case "audio":
+			if bySegment[sid].audio == nil {
+				bySegment[sid].audio = a
+			}
+		case "image":
+			if bySegment[sid].image == nil {
+				bySegment[sid].image = a
+			}
+		}
+	}
+
+	jobIDStr := jobID.String()
+	var b []byte
+	b = append(b, viewHTMLHead...)
+	for _, seg := range resp.Segments {
+		sa := bySegment[seg.ID]
+		b = append(b, `<div class="segment">`...)
+		if sa != nil && sa.audio != nil {
+			b = append(b, fmt.Sprintf(`<audio controls preload="metadata" src="/view/asset/%s?job_id=%s"></audio>`, sa.audio.Asset.ID.String(), jobIDStr)...)
+		}
+		b = append(b, `<p class="segment-text">`...)
+		b = append(b, html.EscapeString(seg.SegmentText)...)
+		b = append(b, `</p>`...)
+		if sa != nil && sa.image != nil {
+			b = append(b, fmt.Sprintf(`<img class="segment-image" src="/view/asset/%s?job_id=%s" alt="">`, sa.image.Asset.ID.String(), jobIDStr)...)
+		}
+		b = append(b, `</div>`...)
+	}
+	b = append(b, viewHTMLTail...)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(b)
+}
+
+// ViewAsset handles GET /view/asset/{id}?job_id=xxx — pass-through for view page (no auth)
+func (h *Handler) ViewAsset(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	assetID, err := uuid.Parse(vars["id"])
+	if err != nil {
+		http.Error(w, "invalid asset id", http.StatusBadRequest)
+		return
+	}
+	jobIDStr := r.URL.Query().Get("job_id")
+	if jobIDStr == "" {
+		http.Error(w, "missing job_id", http.StatusBadRequest)
+		return
+	}
+	jobID, err := uuid.Parse(jobIDStr)
+	if err != nil {
+		http.Error(w, "invalid job_id", http.StatusBadRequest)
+		return
+	}
+
+	asset, err := h.jobService.GetAssetByJobID(r.Context(), assetID, jobID)
+	if err != nil {
+		log.Error().Err(err).Str("asset_id", assetID.String()).Str("job_id", jobIDStr).Msg("ViewAsset: asset not found")
+		http.Error(w, "asset not found", http.StatusNotFound)
+		return
+	}
+
+	if h.storage == nil {
+		http.Error(w, "storage not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	body, err := h.storage.GetObject(r.Context(), asset.S3Key)
+	if err != nil {
+		log.Error().Err(err).Str("asset_id", assetID.String()).Msg("ViewAsset: failed to get object")
+		http.Error(w, "failed to load asset", http.StatusInternalServerError)
+		return
+	}
+	defer body.Close()
+
+	w.Header().Set("Content-Type", asset.MimeType)
+	if asset.SizeBytes > 0 {
+		w.Header().Set("Content-Length", strconv.FormatInt(asset.SizeBytes, 10))
+	}
+	w.WriteHeader(http.StatusOK)
+	io.Copy(w, body)
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
@@ -225,6 +385,30 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
+
+var viewHTMLHead = []byte(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Job view</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+    .segment { margin-bottom: 2rem; padding-bottom: 2rem; border-bottom: 1px solid #eee; }
+    .segment:last-child { border-bottom: none; }
+    .segment audio { display: block; margin-bottom: 0.75rem; width: 100%; }
+    .segment-text { margin: 0.75rem 0; line-height: 1.5; white-space: pre-wrap; }
+    .segment-image { display: block; max-width: 100%; height: auto; margin-top: 0.75rem; border-radius: 6px; }
+  </style>
+</head>
+<body>
+`)
+
+var viewHTMLTail = []byte(`
+</body>
+</html>
+`)
 
 const indexHTML = `<!DOCTYPE html>
 <html lang="en">
@@ -286,6 +470,18 @@ const indexHTML = `<!DOCTYPE html>
     <div id="test-request-result" class="result" style="display:none;"></div>
   </section>
 
+  <section>
+    <h2>Get job data</h2>
+    <form id="get-job">
+      <label for="get-job-api-key">API key</label>
+      <input type="password" id="get-job-api-key" name="api_key" placeholder="Paste api_key" autocomplete="off">
+      <label for="job-id">Job ID</label>
+      <input type="text" id="job-id" name="job_id" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000" required>
+      <button type="submit">Get job</button>
+    </form>
+    <div id="get-job-result" class="result" style="display:none;"></div>
+  </section>
+
   <script>
     document.getElementById('create-user').addEventListener('submit', async function(e) {
       e.preventDefault();
@@ -307,6 +503,7 @@ const indexHTML = `<!DOCTYPE html>
         }
         resultEl.textContent = 'User created.\nuser_id: ' + data.user_id + '\napi_key: ' + data.api_key + '\n\n' + (data.message || '');
         document.getElementById('api-key').value = data.api_key || '';
+        document.getElementById('get-job-api-key').value = data.api_key || '';
       } catch (err) {
         resultEl.textContent = 'Error: ' + err.message;
         resultEl.classList.add('error');
@@ -346,6 +543,42 @@ const indexHTML = `<!DOCTYPE html>
           return;
         }
         resultEl.textContent = 'Job created.\njob_id: ' + data.job_id + '\nstatus: ' + data.status;
+        document.getElementById('job-id').value = data.job_id || '';
+      } catch (err) {
+        resultEl.textContent = 'Error: ' + err.message;
+        resultEl.classList.add('error');
+      }
+    });
+
+    document.getElementById('get-job').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const resultEl = document.getElementById('get-job-result');
+      resultEl.style.display = 'block';
+      resultEl.classList.remove('error');
+      const apiKey = document.getElementById('get-job-api-key').value.trim();
+      const jobId = document.getElementById('job-id').value.trim();
+      if (!apiKey) {
+        resultEl.textContent = 'Please enter an API key.';
+        resultEl.classList.add('error');
+        return;
+      }
+      if (!jobId) {
+        resultEl.textContent = 'Please enter a job ID.';
+        resultEl.classList.add('error');
+        return;
+      }
+      try {
+        const res = await fetch('/v1/jobs/' + encodeURIComponent(jobId), {
+          method: 'GET',
+          headers: { 'Authorization': 'Bearer ' + apiKey }
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          resultEl.textContent = 'Error: ' + (data.error || res.statusText);
+          resultEl.classList.add('error');
+          return;
+        }
+        resultEl.textContent = JSON.stringify(data, null, 2);
       } catch (err) {
         resultEl.textContent = 'Error: ' + err.message;
         resultEl.classList.add('error');
