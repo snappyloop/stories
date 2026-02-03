@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/rs/zerolog/log"
 	"github.com/snappy-loop/stories/internal/config"
 	"github.com/snappy-loop/stories/internal/database"
@@ -103,8 +104,10 @@ func (e *DeliveryError) IsRetryable() bool {
 	return true
 }
 
-// DeliverWebhook delivers a webhook for a completed job
-// Makes one immediate attempt, schedules retries asynchronously if it fails
+// DeliverWebhook delivers a webhook for a completed job.
+// Makes one immediate attempt, schedules retries asynchronously if it fails.
+// Idempotent: if a delivery record already exists for the job (e.g. Kafka redelivery),
+// returns nil without creating a duplicate or sending again (at-most-once semantics).
 func (s *DeliveryService) DeliverWebhook(ctx context.Context, jobID uuid.UUID) error {
 	// Get job details
 	job, err := s.jobRepo.GetByID(ctx, jobID)
@@ -115,6 +118,16 @@ func (s *DeliveryService) DeliverWebhook(ctx context.Context, jobID uuid.UUID) e
 	// Check if webhook is configured
 	if job.WebhookURL == nil || *job.WebhookURL == "" {
 		log.Debug().Str("job_id", jobID.String()).Msg("No webhook configured for job")
+		return nil
+	}
+
+	// Idempotency: skip if we already have a delivery record for this job (Kafka redelivery or commit failure)
+	existing, err := s.deliveryRepo.GetByJobID(ctx, jobID)
+	if err != nil {
+		return fmt.Errorf("failed to check existing delivery: %w", err)
+	}
+	if len(existing) > 0 {
+		log.Debug().Str("job_id", jobID.String()).Msg("Delivery already exists for job, skipping duplicate")
 		return nil
 	}
 
@@ -149,6 +162,12 @@ func (s *DeliveryService) DeliverWebhook(ctx context.Context, jobID uuid.UUID) e
 	}
 
 	if err := s.deliveryRepo.Create(ctx, delivery); err != nil {
+		// Idempotency: concurrent duplicate message may have inserted first (unique on job_id)
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			log.Debug().Str("job_id", jobID.String()).Msg("Delivery record already created (concurrent duplicate), skipping")
+			return nil
+		}
 		log.Error().Err(err).Msg("Failed to create delivery record")
 		return fmt.Errorf("failed to create delivery record: %w", err)
 	}

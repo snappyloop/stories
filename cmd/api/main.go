@@ -48,10 +48,13 @@ func main() {
 	defer kafkaProducer.Close()
 
 	jobService := services.NewJobService(db, kafkaProducer, cfg)
-	storageClient, _ := storage.NewClient(
+	storageClient, err := storage.NewClient(
 		cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket,
 		cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseSSL, cfg.S3PublicURL,
 	)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to initialize storage client")
+	}
 	userRepo := database.NewUserRepository(db)
 	apiKeyRepo := database.NewAPIKeyRepository(db)
 
