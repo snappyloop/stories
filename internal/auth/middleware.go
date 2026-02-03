@@ -57,12 +57,12 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// For demo purposes, we'll use a simple hash lookup
-		// In production, you should use bcrypt.CompareHashAndPassword
-		keyHash := hashAPIKeySimple(apiKey)
-
-		// Retrieve API key from database
-		storedKey, err := s.apiKeyRepo.GetByKeyHash(r.Context(), keyHash)
+		// Look up by key_lookup (sha256 hex) for keys created via API; fallback to legacy key_hash lookup
+		storedKey, err := s.apiKeyRepo.GetByKeyLookup(r.Context(), database.KeyLookupHash(apiKey))
+		if err != nil {
+			// Legacy: try lookup by raw key (key_hash stored as plain key)
+			storedKey, err = s.apiKeyRepo.GetByKeyHash(r.Context(), hashAPIKeySimple(apiKey))
+		}
 		if err != nil {
 			log.Debug().Msg("API key not found")
 			writeJSONError(w, http.StatusUnauthorized, "invalid api key")
@@ -76,10 +76,12 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Verify key hash in constant time (using bcrypt compare)
+		// Verify key: bcrypt for new keys; legacy keys store plain key in KeyHash
 		if err := bcrypt.CompareHashAndPassword([]byte(storedKey.KeyHash), []byte(apiKey)); err != nil {
-			writeJSONError(w, http.StatusUnauthorized, "invalid api key")
-			return
+			if storedKey.KeyHash != apiKey {
+				writeJSONError(w, http.StatusUnauthorized, "invalid api key")
+				return
+			}
 		}
 
 		// Add user ID and API key ID to context
@@ -110,9 +112,10 @@ func GetAPIKeyID(ctx context.Context) (uuid.UUID, error) {
 
 // ValidateAPIKey validates an API key and returns the associated key info
 func (s *Service) ValidateAPIKey(ctx context.Context, apiKey string) (*models.APIKey, error) {
-	keyHash := hashAPIKeySimple(apiKey)
-
-	storedKey, err := s.apiKeyRepo.GetByKeyHash(ctx, keyHash)
+	storedKey, err := s.apiKeyRepo.GetByKeyLookup(ctx, database.KeyLookupHash(apiKey))
+	if err != nil {
+		storedKey, err = s.apiKeyRepo.GetByKeyHash(ctx, hashAPIKeySimple(apiKey))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("api key not found: %w", err)
 	}
@@ -121,9 +124,11 @@ func (s *Service) ValidateAPIKey(ctx context.Context, apiKey string) (*models.AP
 		return nil, fmt.Errorf("api key is disabled")
 	}
 
-	// Verify with bcrypt
+	// Verify: bcrypt for new keys; legacy keys store plain key in KeyHash
 	if err := bcrypt.CompareHashAndPassword([]byte(storedKey.KeyHash), []byte(apiKey)); err != nil {
-		return nil, fmt.Errorf("invalid api key")
+		if storedKey.KeyHash != apiKey {
+			return nil, fmt.Errorf("invalid api key")
+		}
 	}
 
 	return storedKey, nil
