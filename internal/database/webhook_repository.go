@@ -36,6 +36,9 @@ func (r *WebhookDeliveryRepository) Create(ctx context.Context, delivery *models
 	return err
 }
 
+// ErrNoRowsAffected is returned when Update affects no rows (record missing)
+var ErrNoRowsAffected = fmt.Errorf("webhook delivery record not found")
+
 // Update updates a webhook delivery record
 func (r *WebhookDeliveryRepository) Update(ctx context.Context, delivery *models.WebhookDelivery) error {
 	query := `
@@ -44,12 +47,21 @@ func (r *WebhookDeliveryRepository) Update(ctx context.Context, delivery *models
 		WHERE id = $5
 	`
 
-	_, err := r.db.ExecContext(ctx, query,
+	result, err := r.db.ExecContext(ctx, query,
 		delivery.Status, delivery.Attempts, delivery.LastAttemptAt,
 		delivery.LastError, delivery.ID,
 	)
-
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNoRowsAffected
+	}
+	return nil
 }
 
 // GetByJobID retrieves webhook deliveries for a job

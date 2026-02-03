@@ -149,7 +149,7 @@ func (s *DeliveryService) DeliverWebhook(ctx context.Context, jobID uuid.UUID) e
 
 	if err := s.deliveryRepo.Create(ctx, delivery); err != nil {
 		log.Error().Err(err).Msg("Failed to create delivery record")
-		// Continue with delivery attempt
+		return fmt.Errorf("failed to create delivery record: %w", err)
 	}
 
 	// Make one immediate attempt (non-blocking for consumer)
@@ -164,6 +164,7 @@ func (s *DeliveryService) DeliverWebhook(ctx context.Context, jobID uuid.UUID) e
 		delivery.Status = "sent"
 		if err := s.deliveryRepo.Update(ctx, delivery); err != nil {
 			log.Error().Err(err).Msg("Failed to update delivery record")
+			return fmt.Errorf("failed to update delivery record: %w", err)
 		}
 
 		log.Info().
@@ -184,6 +185,7 @@ func (s *DeliveryService) DeliverWebhook(ctx context.Context, jobID uuid.UUID) e
 		delivery.Status = "failed"
 		if err := s.deliveryRepo.Update(ctx, delivery); err != nil {
 			log.Error().Err(err).Msg("Failed to update delivery record")
+			return fmt.Errorf("failed to update delivery record: %w", err)
 		}
 
 		log.Error().
@@ -201,6 +203,7 @@ func (s *DeliveryService) DeliverWebhook(ctx context.Context, jobID uuid.UUID) e
 	delivery.Status = "pending"
 	if err := s.deliveryRepo.Update(ctx, delivery); err != nil {
 		log.Error().Err(err).Msg("Failed to update delivery record")
+		return fmt.Errorf("failed to update delivery record: %w", err)
 	}
 
 	log.Warn().
