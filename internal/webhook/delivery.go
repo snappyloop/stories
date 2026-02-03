@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -222,6 +223,7 @@ type RetryWorker struct {
 	config   *config.Config
 	stopChan chan struct{}
 	ticker   *time.Ticker
+	stopOnce sync.Once
 }
 
 // NewRetryWorker creates a new retry worker
@@ -256,12 +258,14 @@ func (w *RetryWorker) Start(ctx context.Context) {
 	}()
 }
 
-// Stop stops the retry worker
+// Stop stops the retry worker. Safe to call multiple times.
 func (w *RetryWorker) Stop() {
-	if w.ticker != nil {
-		w.ticker.Stop()
-	}
-	close(w.stopChan)
+	w.stopOnce.Do(func() {
+		if w.ticker != nil {
+			w.ticker.Stop()
+		}
+		close(w.stopChan)
+	})
 }
 
 // processPendingDeliveries processes pending webhook deliveries
@@ -280,8 +284,8 @@ func (w *RetryWorker) processPendingDeliveries(ctx context.Context) {
 	log.Info().Int("count", len(deliveries)).Msg("Processing pending webhook deliveries")
 
 	for _, delivery := range deliveries {
-		// Check if it's time to retry based on exponential backoff
-		if !w.shouldRetry(delivery) {
+		// Check if it's time to retry based on exponential backoff; may mark delivery as failed if max retries exceeded
+		if !w.shouldRetryOrMarkFailed(ctx, delivery) {
 			continue
 		}
 
@@ -344,13 +348,13 @@ func (w *RetryWorker) processPendingDeliveries(ctx context.Context) {
 	}
 }
 
-// shouldRetry determines if a delivery should be retried based on exponential backoff
-func (w *RetryWorker) shouldRetry(delivery *models.WebhookDelivery) bool {
+// shouldRetryOrMarkFailed returns true if the delivery should be retried now (backoff elapsed).
+// If max retries are exceeded, it marks the delivery as failed in the DB (using ctx) and returns false.
+func (w *RetryWorker) shouldRetryOrMarkFailed(ctx context.Context, delivery *models.WebhookDelivery) bool {
 	// Check if max retries exceeded
 	if delivery.Attempts >= w.config.WebhookMaxRetries {
-		// Mark as permanently failed
+		// Mark as permanently failed (respects ctx for graceful shutdown)
 		delivery.Status = "failed"
-		ctx := context.Background()
 		if err := w.service.deliveryRepo.Update(ctx, delivery); err != nil {
 			log.Error().Err(err).Msg("Failed to update delivery status to failed")
 		}
