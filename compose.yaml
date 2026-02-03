@@ -80,7 +80,7 @@ services:
       POSTGRES_USER: stories
       POSTGRES_PASSWORD: stories_dev_password
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:

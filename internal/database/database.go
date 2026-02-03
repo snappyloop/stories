@@ -15,6 +15,11 @@ type DB struct {
 	*sql.DB
 }
 
+// SQLDB returns the underlying *sql.DB for use with migrations etc.
+func (db *DB) SQLDB() *sql.DB {
+	return db.DB
+}
+
 // Connect establishes a connection to PostgreSQL
 func Connect(databaseURL string) (*DB, error) {
 	db, err := sql.Open("postgres", databaseURL)

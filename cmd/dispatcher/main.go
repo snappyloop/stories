@@ -4,11 +4,33 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
+	"time"
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/snappy-loop/stories/internal/config"
+	"github.com/snappy-loop/stories/internal/database"
+	"github.com/snappy-loop/stories/internal/kafka"
+	"github.com/snappy-loop/stories/internal/webhook"
+	"github.com/snappy-loop/stories/migrations"
 )
+
+// WebhookHandler implements kafka.MessageHandler
+type WebhookHandler struct {
+	deliveryService *webhook.DeliveryService
+}
+
+func (h *WebhookHandler) HandleMessage(ctx context.Context, msg *kafka.WebhookMessage) error {
+	log.Info().
+		Str("job_id", msg.JobID.String()).
+		Str("event", msg.Event).
+		Msg("Processing webhook event")
+
+	// Deliver webhook for the job
+	return h.deliveryService.DeliverWebhook(ctx, msg.JobID)
+}
 
 func main() {
 	// Setup logging
@@ -27,21 +49,53 @@ func main() {
 
 	log.Info().Msg("Starting Stories Webhook Dispatcher")
 
-	// TODO: Initialize dependencies
-	// - Database connection
-	// - Kafka consumer for webhook events
-	// - HTTP client for webhook delivery
+	// Load configuration
+	cfg := config.Load()
+
+	// Initialize database connection
+	db, err := database.Connect(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Failed to connect to database")
+	}
+	defer db.Close()
+
+	if err := migrations.Run(db.SQLDB()); err != nil {
+		log.Fatal().Err(err).Msg("Failed to run migrations")
+	}
+
+	// Initialize webhook delivery service
+	deliveryService := webhook.NewDeliveryService(db, cfg)
+
+	// Create webhook handler
+	handler := &WebhookHandler{
+		deliveryService: deliveryService,
+	}
+
+	// Initialize Kafka consumer for webhook events
+	consumer := kafka.NewConsumer(
+		cfg.KafkaBrokers,
+		cfg.KafkaTopicWebhooks,
+		"webhook-dispatcher",
+		handler,
+	)
+	defer consumer.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_ = ctx // used when Kafka consumer is implemented
 
-	// TODO: Start Kafka consumer
-	// go func() {
-	// 	if err := consumer.Start(ctx); err != nil {
-	// 		log.Error().Err(err).Msg("Kafka consumer error")
-	// 	}
-	// }()
+	// Start retry worker for failed webhook deliveries
+	deliveryService.Start(ctx)
+	defer deliveryService.Stop()
+
+	// Start Kafka consumer in goroutine
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := consumer.Start(ctx); err != nil && err != context.Canceled {
+			log.Error().Err(err).Msg("Kafka consumer error")
+		}
+	}()
 
 	log.Info().Msg("Dispatcher started, waiting for webhook events...")
 
@@ -51,10 +105,23 @@ func main() {
 	<-quit
 
 	log.Info().Msg("Shutting down dispatcher...")
+
+	// Cancel context to stop consumer
 	cancel()
 
-	// TODO: Wait for graceful shutdown
-	// consumer.Close()
+	// Wait for consumer to finish with timeout
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Info().Msg("Consumer shutdown complete")
+	case <-time.After(30 * time.Second):
+		log.Warn().Msg("Consumer shutdown timeout")
+	}
 
 	log.Info().Msg("Dispatcher exited")
 }

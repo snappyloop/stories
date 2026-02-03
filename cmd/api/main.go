@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -19,10 +18,10 @@ import (
 	"github.com/snappy-loop/stories/internal/kafka"
 	"github.com/snappy-loop/stories/internal/services"
 	"github.com/snappy-loop/stories/internal/storage"
+	"github.com/snappy-loop/stories/migrations"
 )
 
 func main() {
-	// Setup logging
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
@@ -36,106 +35,80 @@ func main() {
 	}
 	zerolog.SetGlobalLevel(level)
 
-	log.Info().Msg("Starting Stories API server")
+	log.Info().Msg("Starting Stories API")
 
-	// Load configuration
 	cfg := config.Load()
-	httpAddr := cfg.HTTPAddr
 
-	// Initialize database
 	db, err := database.Connect(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to connect to database")
 	}
 	defer db.Close()
 
-	// Initialize Kafka producer
+	if err := migrations.Run(db.SQLDB()); err != nil {
+		log.Fatal().Err(err).Msg("Failed to run migrations")
+	}
+
 	kafkaProducer := kafka.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopicJobs)
 	defer kafkaProducer.Close()
 
-	// Initialize S3 storage client
+	jobService := services.NewJobService(db, kafkaProducer, cfg)
 	storageClient, err := storage.NewClient(
-		cfg.S3Endpoint,
-		cfg.S3Region,
-		cfg.S3Bucket,
-		cfg.S3AccessKey,
-		cfg.S3SecretKey,
-		cfg.S3UseSSL,
-		cfg.S3PublicURL,
+		cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket,
+		cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseSSL, cfg.S3PublicURL,
 	)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Failed to initialize storage client")
 	}
+	userRepo := database.NewUserRepository(db)
+	apiKeyRepo := database.NewAPIKeyRepository(db)
 
-	// Initialize services
+	h := handlers.NewHandler(
+		jobService,
+		storageClient,
+		userRepo,
+		apiKeyRepo,
+		cfg.DefaultQuotaChars,
+		cfg.DefaultQuotaPeriod,
+	)
+
 	authService := auth.NewService(db)
-	jobService := services.NewJobService(db, kafkaProducer, cfg)
-	handler := handlers.NewHandler(jobService, storageClient)
 
-	// Setup HTTP router
-	router := mux.NewRouter()
+	r := mux.NewRouter()
+	r.HandleFunc("/", h.Index).Methods("GET")
+	r.HandleFunc("/users", h.CreateUser).Methods("POST")
 
-	// Health check
-	router.HandleFunc("/health", healthHandler(db)).Methods("GET")
+	api := r.PathPrefix("/v1").Subrouter()
+	api.Use(authService.Middleware)
+	api.HandleFunc("/jobs", h.CreateJob).Methods("POST")
+	api.HandleFunc("/jobs/{id}", h.GetJob).Methods("GET")
+	api.HandleFunc("/jobs", h.ListJobs).Methods("GET")
+	api.HandleFunc("/assets/{id}", h.GetAsset).Methods("GET")
+	api.HandleFunc("/assets/{id}/content", h.GetAssetContent).Methods("GET")
 
-	// API routes with authentication
-	apiRouter := router.PathPrefix("/v1").Subrouter()
-	apiRouter.Use(authService.Middleware)
-
-	apiRouter.HandleFunc("/jobs", handler.CreateJob).Methods("POST")
-	apiRouter.HandleFunc("/jobs", handler.ListJobs).Methods("GET")
-	apiRouter.HandleFunc("/jobs/{id}", handler.GetJob).Methods("GET")
-	apiRouter.HandleFunc("/assets/{id}", handler.GetAsset).Methods("GET")
-	apiRouter.HandleFunc("/assets/{id}/content", handler.GetAssetContent).Methods("GET")
-
-	// Setup server
 	srv := &http.Server{
-		Addr:         httpAddr,
-		Handler:      router,
+		Addr:         cfg.HTTPAddr,
+		Handler:      r,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start server in goroutine
 	go func() {
-		log.Info().Str("addr", httpAddr).Msg("API server listening")
+		log.Info().Str("addr", cfg.HTTPAddr).Msg("API listening")
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatal().Err(err).Msg("Failed to start server")
+			log.Fatal().Err(err).Msg("Server failed")
 		}
 	}()
 
-	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	log.Info().Msg("Shutting down server...")
-
-	// Graceful shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	log.Info().Msg("Shutting down API...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
 	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatal().Err(err).Msg("Server forced to shutdown")
+		log.Error().Err(err).Msg("Server shutdown error")
 	}
-
-	log.Info().Msg("Server exited")
-}
-
-func healthHandler(db *database.DB) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		// Check database health
-		if err := db.Health(); err != nil {
-			log.Error().Err(err).Msg("Database health check failed")
-			w.WriteHeader(http.StatusServiceUnavailable)
-			fmt.Fprint(w, `{"status":"unhealthy","error":"database"}`)
-			return
-		}
-
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, `{"status":"ok"}`)
-	}
+	log.Info().Msg("API exited")
 }

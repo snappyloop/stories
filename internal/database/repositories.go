@@ -2,13 +2,17 @@ package database
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/snappy-loop/stories/internal/models"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // JobRepository handles job-related database operations
@@ -239,7 +243,14 @@ func NewAPIKeyRepository(db *DB) *APIKeyRepository {
 	return &APIKeyRepository{db: db}
 }
 
-// GetByKeyHash retrieves an API key by its hash
+// KeyLookupHash returns the lookup hash for an API key (sha256 hex).
+// Used for secure lookup without storing the plain key.
+func KeyLookupHash(apiKey string) string {
+	h := sha256.Sum256([]byte(apiKey))
+	return hex.EncodeToString(h[:])
+}
+
+// GetByKeyHash retrieves an API key by its hash (legacy lookup by raw key)
 func (r *APIKeyRepository) GetByKeyHash(ctx context.Context, keyHash string) (*models.APIKey, error) {
 	query := `
 		SELECT id, user_id, key_hash, status, quota_period, quota_chars,
@@ -260,6 +271,71 @@ func (r *APIKeyRepository) GetByKeyHash(ctx context.Context, keyHash string) (*m
 	}
 
 	return key, err
+}
+
+// GetByKeyLookup retrieves an API key by its lookup hash (sha256 hex of the plain key)
+func (r *APIKeyRepository) GetByKeyLookup(ctx context.Context, lookup string) (*models.APIKey, error) {
+	query := `
+		SELECT id, user_id, key_hash, status, quota_period, quota_chars,
+			used_chars_in_period, period_started_at, created_at
+		FROM api_keys
+		WHERE key_lookup = $1
+	`
+
+	key := &models.APIKey{}
+	err := r.db.QueryRowContext(ctx, query, lookup).Scan(
+		&key.ID, &key.UserID, &key.KeyHash, &key.Status, &key.QuotaPeriod,
+		&key.QuotaChars, &key.UsedCharsInPeriod, &key.PeriodStartedAt,
+		&key.CreatedAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("api key not found")
+	}
+
+	return key, err
+}
+
+// CreateAPIKey creates a new API key for a user and returns the plain key (shown only once).
+func (r *APIKeyRepository) CreateAPIKey(ctx context.Context, userID uuid.UUID, quotaChars int64, quotaPeriod string) (plainKey string, key *models.APIKey, err error) {
+	const keyLen = 32
+	b := make([]byte, keyLen)
+	if _, err := rand.Read(b); err != nil {
+		return "", nil, fmt.Errorf("generate key: %w", err)
+	}
+	plainKey = "sk_" + hex.EncodeToString(b)
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(plainKey), bcrypt.DefaultCost)
+	if err != nil {
+		return "", nil, fmt.Errorf("hash key: %w", err)
+	}
+	lookup := KeyLookupHash(plainKey)
+
+	key = &models.APIKey{
+		ID:                uuid.New(),
+		UserID:            userID,
+		KeyHash:           string(hash),
+		Status:            "active",
+		QuotaPeriod:       quotaPeriod,
+		QuotaChars:        quotaChars,
+		UsedCharsInPeriod: 0,
+		PeriodStartedAt:   time.Now(),
+		CreatedAt:         time.Now(),
+	}
+
+	query := `
+		INSERT INTO api_keys (id, user_id, key_hash, key_lookup, status, quota_period, quota_chars,
+			used_chars_in_period, period_started_at, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`
+	_, err = r.db.ExecContext(ctx, query,
+		key.ID, key.UserID, key.KeyHash, lookup, key.Status, key.QuotaPeriod,
+		key.QuotaChars, key.UsedCharsInPeriod, key.PeriodStartedAt, key.CreatedAt,
+	)
+	if err != nil {
+		return "", nil, err
+	}
+	return plainKey, key, nil
 }
 
 // UpdateUsage updates the usage for an API key
