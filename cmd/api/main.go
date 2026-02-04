@@ -62,9 +62,12 @@ func main() {
 	}
 	userRepo := database.NewUserRepository(db)
 	apiKeyRepo := database.NewAPIKeyRepository(db)
+	fileRepo := database.NewFileRepository(db)
+	fileService := services.NewFileService(fileRepo, storageClient, cfg.S3Bucket, cfg)
 
 	h := handlers.NewHandler(
 		jobService,
+		fileService,
 		storageClient,
 		userRepo,
 		apiKeyRepo,
@@ -87,6 +90,9 @@ func main() {
 	api.HandleFunc("/jobs", h.CreateJob).Methods("POST")
 	api.HandleFunc("/jobs/{id}", h.GetJob).Methods("GET")
 	api.HandleFunc("/jobs", h.ListJobs).Methods("GET")
+	api.HandleFunc("/files", h.UploadFile).Methods("POST")
+	api.HandleFunc("/files", h.ListFiles).Methods("GET")
+	api.HandleFunc("/files/{id}", h.DeleteFile).Methods("DELETE")
 	api.HandleFunc("/assets/{id}", h.GetAsset).Methods("GET")
 	api.HandleFunc("/assets/{id}/content", h.GetAssetContent).Methods("GET")
 

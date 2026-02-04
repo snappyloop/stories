@@ -91,6 +91,15 @@ func main() {
 	)
 	defer webhookProducer.Close()
 
+	// Input processors for multi-modal support
+	fileRepo := database.NewFileRepository(db)
+	jobFileRepo := database.NewJobFileRepository(db)
+	multiFileProcessor := processor.NewMultiFileProcessor(llmClient, storageClient, fileRepo, jobFileRepo)
+	inputRegistry := processor.NewInputProcessorRegistry(
+		processor.NewTextProcessor(),
+		multiFileProcessor,
+	)
+
 	// Initialize job processor
 	jobProcessor := processor.NewJobProcessor(
 		db,
@@ -98,6 +107,9 @@ func main() {
 		storageClient,
 		webhookProducer,
 		cfg,
+		inputRegistry,
+		jobFileRepo,
+		fileRepo,
 	)
 
 	// Create job handler
