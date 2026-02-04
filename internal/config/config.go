@@ -87,8 +87,8 @@ func Load() *Config {
 
 		GeminiAPIKey:      getEnv("GEMINI_API_KEY", ""),
 		GeminiAPIEndpoint: getEnv("GEMINI_API_ENDPOINT", ""),
-		GeminiModelPro:    getEnv("GEMINI_MODEL_PRO", "gemini-2.0-flash-thinking-exp-01-21"),
-		GeminiModelFlash:  getEnv("GEMINI_MODEL_FLASH", "gemini-2.0-flash-exp"),
+		GeminiModelPro:    getEnv("GEMINI_MODEL_PRO", "gemini-3-pro-preview"),
+		GeminiModelFlash:  getEnv("GEMINI_MODEL_FLASH", "gemini-2.5-flash-lite"),
 		GeminiModelImage:  getEnv("GEMINI_MODEL_IMAGE", "gemini-3-pro-image-preview"),
 		GeminiModelTTS:    getEnv("GEMINI_MODEL_TTS", "gemini-2.5-pro-preview-tts"),
 		GeminiTTSVoice:    getEnv("GEMINI_TTS_VOICE", "Zephyr"),

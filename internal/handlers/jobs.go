@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,6 +28,7 @@ type Handler struct {
 	apiKeyRepo         *database.APIKeyRepository
 	defaultQuotaChars  int64
 	defaultQuotaPeriod string
+	maxPicturesCount   int
 }
 
 // NewHandler creates a new handler
@@ -37,6 +39,7 @@ func NewHandler(
 	apiKeyRepo *database.APIKeyRepository,
 	defaultQuotaChars int64,
 	defaultQuotaPeriod string,
+	maxPicturesCount int,
 ) *Handler {
 	return &Handler{
 		jobService:         jobService,
@@ -45,6 +48,7 @@ func NewHandler(
 		apiKeyRepo:         apiKeyRepo,
 		defaultQuotaChars:  defaultQuotaChars,
 		defaultQuotaPeriod: defaultQuotaPeriod,
+		maxPicturesCount:   maxPicturesCount,
 	}
 }
 
@@ -59,7 +63,9 @@ func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Generation(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(generationHTML))
+	maxStr := strconv.Itoa(h.maxPicturesCount)
+	html := strings.ReplaceAll(generationHTML, "__MAX_PICTURES_COUNT__", maxStr)
+	w.Write([]byte(html))
 }
 
 // CreateUser handles POST /users — creates a user and an API key, returns both (API key shown once)
@@ -432,10 +438,13 @@ const indexHTML = `<!DOCTYPE html>
     input { padding: 0.5rem; margin-bottom: 0.75rem; border: 1px solid #ccc; border-radius: 4px; max-width: 360px; }
     button { padding: 0.5rem 1rem; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
     button:hover { background: #555; }
+    .index-api-section input { width: 100%; }
+    .index-api-hint { font-size: 0.8rem; color: #666; margin-top: 0.25rem; }
     .tasks-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
     .tasks-table th, .tasks-table td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e0e0e0; }
     .tasks-table th { font-weight: 600; }
     .tasks-table a { color: #333; }
+    .tasks-table .job-id-cell { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tasks-error { color: #c00; margin-top: 0.5rem; }
     .tasks-empty { color: #666; margin-top: 1rem; }
     .nav-link { margin-right: 1rem; }
@@ -445,22 +454,27 @@ const indexHTML = `<!DOCTYPE html>
   <h1>Great Stories</h1>
   <p><a href="/" class="nav-link">Tasks</a><a href="/generation" class="nav-link">Generation</a></p>
 
-  <section>
+  <section class="index-api-section">
     <label for="index-api-key">API key</label>
     <input type="password" id="index-api-key" placeholder="API key" autocomplete="off">
     <button type="button" id="index-load-tasks">Load tasks</button>
+    <p class="index-api-hint">Email me to <a href="mailto:vasily.kulakov@gmail.com">vasily.kulakov@gmail.com</a> to get an API key.</p>
     <p id="index-error" class="tasks-error" style="display:none;"></p>
   </section>
 
   <table id="index-tasks-table" class="tasks-table" style="display:none;">
     <thead>
-      <tr><th>Job ID</th><th>Status</th><th>Created</th><th></th></tr>
+      <tr><th>Job ID</th><th>Status</th><th>Type</th><th>Photos</th><th>Speech</th><th>Created</th><th></th></tr>
     </thead>
     <tbody id="index-tasks-body"></tbody>
   </table>
   <p id="index-tasks-empty" class="tasks-empty" style="display:none;">No tasks yet. Enter API key and click Load tasks, or <a href="/generation">create a new job</a>.</p>
 
   <script>
+    function contractId(id) {
+      if (!id || id.length <= 12) return id;
+      return id.substring(0, 8) + '…' + id.substring(id.length - 4);
+    }
     document.getElementById('index-load-tasks').addEventListener('click', async function() {
       const apiKey = document.getElementById('index-api-key').value.trim();
       const errorEl = document.getElementById('index-error');
@@ -492,9 +506,13 @@ const indexHTML = `<!DOCTYPE html>
           jobs.forEach(function(job) {
             const tr = document.createElement('tr');
             const id = job.id || job.job_id || '';
+            const shortId = contractId(id);
             const status = job.status || '';
+            const type = job.input_type || '';
+            const photos = job.pictures_count != null ? job.pictures_count : '';
+            const speech = job.audio_type || '';
             const created = job.created_at ? new Date(job.created_at).toLocaleString() : '';
-            tr.innerHTML = '<td><code style="font-size:0.85em">' + id + '</code></td><td>' + status + '</td><td>' + created + '</td><td><a href="/view/' + id + '">View</a></td>';
+            tr.innerHTML = '<td class="job-id-cell" title="' + id.replace(/"/g, '&quot;') + '"><code style="font-size:0.85em">' + shortId + '</code></td><td>' + status + '</td><td>' + type + '</td><td>' + photos + '</td><td>' + speech + '</td><td>' + created + '</td><td><a href="/view/' + id + '">View</a></td>';
             bodyEl.appendChild(tr);
           });
         }
@@ -534,12 +552,45 @@ const generationHTML = `<!DOCTYPE html>
     @keyframes loading-dots { 0%, 20% { content: ''; } 40% { content: '.'; } 60% { content: '..'; } 80%, 100% { content: '...'; } }
     .get-job-view-link { margin-left: 0.25rem; }
     .nav-link { margin-right: 1rem; }
+    .api-docs { margin-bottom: 1.5rem; border: 1px solid #e0e0e0; border-radius: 8px; }
+    .api-docs summary { padding: 0.75rem 1rem; cursor: pointer; font-weight: 500; list-style: none; }
+    .api-docs summary::-webkit-details-marker { display: none; }
+    .api-docs summary::before { content: '▶'; display: inline-block; margin-right: 0.5rem; font-size: 0.7em; transition: transform 0.2s; }
+    .api-docs[open] summary::before { transform: rotate(90deg); }
+    .api-docs-inner { padding: 0 1rem 1rem; font-size: 0.9rem; color: #444; }
+    .api-docs-inner h4 { margin: 1rem 0 0.35rem; font-size: 0.95rem; }
+    .api-docs-inner h4:first-child { margin-top: 0; }
+    .api-docs-inner pre { background: #f5f5f5; padding: 0.5rem; border-radius: 4px; overflow-x: auto; font-size: 0.85em; }
+    .api-docs-inner p { margin: 0.25rem 0 0; }
   </style>
 </head>
 <body>
   <h1>Great Stories — Generation</h1>
   <p><a href="/" class="nav-link">Tasks</a><a href="/generation" class="nav-link">Generation</a></p>
   <p>Send a test job request and check job status.</p>
+
+  <details class="api-docs">
+    <summary>API description</summary>
+    <div class="api-docs-inner">
+      <h4>POST /v1/jobs</h4>
+      <p>Create a new enrichment job. Use <code>Authorization: Bearer &lt;api_key&gt;</code>.</p>
+      <p><strong>Request:</strong></p>
+      <pre>{
+  "text": "string (required, max 50k chars)",
+  "type": "educational | financial | fictional",
+  "pictures_count": "integer (1–max from config)",
+  "audio_type": "free_speech | podcast",
+  "webhook": { "url": "string (optional)", "secret": "string (optional)" }
+}</pre>
+      <p><strong>Response (202):</strong> <code>{ "job_id", "status": "queued", "created_at" }</code></p>
+      <h4>GET /v1/jobs/{job_id}</h4>
+      <p>Get job status, segments, and assets (with download URLs).</p>
+      <h4>GET /v1/jobs</h4>
+      <p>List your jobs (with pagination).</p>
+      <h4>GET /v1/assets/{asset_id} / GET /v1/assets/{asset_id}/content</h4>
+      <p>Asset metadata and pass-through content.</p>
+    </div>
+  </details>
 
   <section>
     <h2>API key</h2>
@@ -551,7 +602,8 @@ const generationHTML = `<!DOCTYPE html>
     <h2>Send test request</h2>
     <form id="test-request">
       <label for="text">Text</label>
-      <textarea id="text" name="text" placeholder="Short story or paragraph to enrich..." required></textarea>
+      <textarea id="text" name="text" placeholder="Short story or paragraph to enrich..." required maxlength="50000"></textarea>
+      <p id="text-remaining" style="font-size:0.85rem;color:#666;margin:-0.5rem 0 0.75rem 0;">50000 characters remaining</p>
       <label for="type">Type</label>
       <select id="type" name="type">
         <option value="educational">Educational</option>
@@ -559,7 +611,7 @@ const generationHTML = `<!DOCTYPE html>
         <option value="fictional">Fictional</option>
       </select>
       <label for="pictures_count">Pictures count</label>
-      <input type="number" id="pictures_count" name="pictures_count" value="2" min="1" max="20">
+      <input type="number" id="pictures_count" name="pictures_count" value="2" min="1" max="__MAX_PICTURES_COUNT__">
       <label for="audio_type">Audio type</label>
       <select id="audio_type" name="audio_type">
         <option value="free_speech">Free speech</option>
@@ -577,8 +629,8 @@ const generationHTML = `<!DOCTYPE html>
       <p style="margin: 0.25rem 0 0 0; font-size: 0.85rem; color: #666;">Processing may take up to 10 minutes, depending on the text length.</p>
     </div>
     <p id="get-job-poll-status" class="poll-status" style="display:none;"></p>
-    <span id="get-job-view-wrap" style="display:none;"><a id="get-job-view-link" href="#" class="get-job-view-link">View</a></span>
-    <form id="get-job">
+    <span id="get-job-view-wrap" style="display:none;"><a id="get-job-view-link" href="#" class="get-job-view-link">View</a></span>   
+	<form id="get-job">
       <label for="job-id">Job ID</label>
       <input type="text" id="job-id" name="job_id" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000" required>
       <button type="submit">Get job</button>
@@ -587,21 +639,47 @@ const generationHTML = `<!DOCTYPE html>
   </section>
 
   <script>
+    var MAX_TEXT_LENGTH = 50000;
+    var MAX_PICTURES_COUNT = __MAX_PICTURES_COUNT__;
+    var textEl = document.getElementById('text');
+    var remainingEl = document.getElementById('text-remaining');
+    function updateRemaining() {
+      var len = textEl.value.length;
+      var rem = MAX_TEXT_LENGTH - len;
+      remainingEl.textContent = rem + ' characters remaining';
+      if (rem < 0) remainingEl.style.color = '#c00';
+      else remainingEl.style.color = '#666';
+    }
+    textEl.addEventListener('input', updateRemaining);
+    textEl.addEventListener('paste', function() { setTimeout(updateRemaining, 0); });
+
     document.getElementById('test-request').addEventListener('submit', async function(e) {
       e.preventDefault();
       const resultEl = document.getElementById('test-request-result');
       resultEl.style.display = 'block';
       resultEl.classList.remove('error');
+      const text = document.getElementById('text').value;
+      if (text.length > MAX_TEXT_LENGTH) {
+        resultEl.textContent = 'Text is too long. Maximum ' + MAX_TEXT_LENGTH + ' characters.';
+        resultEl.classList.add('error');
+        return;
+      }
       const apiKey = document.getElementById('api-key').value.trim();
       if (!apiKey) {
         resultEl.textContent = 'Please enter an API key.';
         resultEl.classList.add('error');
         return;
       }
+      const picturesCount = parseInt(document.getElementById('pictures_count').value, 10) || 2;
+      if (picturesCount > MAX_PICTURES_COUNT || picturesCount < 1) {
+        resultEl.textContent = 'Pictures count must be between 1 and ' + MAX_PICTURES_COUNT + '.';
+        resultEl.classList.add('error');
+        return;
+      }
       const payload = {
-        text: document.getElementById('text').value,
+        text: text,
         type: document.getElementById('type').value,
-        pictures_count: parseInt(document.getElementById('pictures_count').value, 10) || 2,
+        pictures_count: picturesCount,
         audio_type: document.getElementById('audio_type').value
       };
       try {

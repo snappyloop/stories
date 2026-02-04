@@ -139,19 +139,32 @@ go build -o bin/dispatcher ./cmd/dispatcher
 
 ## Deployment
 
-### Kubernetes with Helm
+### Docker Compose
 
+Deploy the full stack (API, worker, dispatcher, PostgreSQL, Kafka, MinIO) with Docker Compose:
+
+1. Copy the environment file and set required variables:
+   ```bash
+   cp env.example .env
+   # Edit .env: set DATABASE_URL, GEMINI_API_KEY, and any other production values
+   ```
+
+2. Build and start all services:
+   ```bash
+   docker-compose up -d --build
+   ```
+
+3. Run database migrations:
+   ```bash
+   docker-compose exec api ./stories-api migrate
+   ```
+
+4. The API is available on port 8080. Use the same [Create API Key](#create-api-key) and [Test the API](#test-the-api) steps as in Quick Start, adjusting the host if not localhost.
+
+To stop:
 ```bash
-cd ../charts/stories
-
-# Install
-helm install stories . -f values.yaml
-
-# Upgrade
-helm upgrade stories . -f values.yaml
+docker-compose down
 ```
-
-See [charts/stories/README.md](../charts/stories/README.md) for Helm chart documentation.
 
 ## API Documentation
 

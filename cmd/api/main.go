@@ -70,6 +70,7 @@ func main() {
 		apiKeyRepo,
 		cfg.DefaultQuotaChars,
 		cfg.DefaultQuotaPeriod,
+		cfg.MaxPicturesCount,
 	)
 
 	authService := auth.NewService(db)

@@ -15,9 +15,8 @@ import (
 
 // Client wraps S3 storage operations
 type Client struct {
-	s3Client  *s3.Client
-	bucket    string
-	publicURL string
+	s3Client *s3.Client
+	bucket   string
 }
 
 // NewClient creates a new S3 storage client
@@ -50,9 +49,8 @@ func NewClient(endpoint, region, bucket, accessKey, secretKey string, useSSL boo
 		Msg("S3 client initialized")
 
 	return &Client{
-		s3Client:  s3Client,
-		bucket:    bucket,
-		publicURL: publicURL,
+		s3Client: s3Client,
+		bucket:   bucket,
 	}, nil
 }
 
@@ -93,14 +91,6 @@ func (c *Client) GeneratePresignedURL(key string, expiration time.Duration) (str
 	}
 
 	return req.URL, nil
-}
-
-// GetPublicURL returns the public URL for an object
-func (c *Client) GetPublicURL(key string) string {
-	if c.publicURL != "" {
-		return fmt.Sprintf("%s/%s", c.publicURL, key)
-	}
-	return fmt.Sprintf("https://%s.s3.amazonaws.com/%s", c.bucket, key)
 }
 
 // Delete deletes an object from S3
