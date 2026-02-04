@@ -18,15 +18,15 @@ github.com/tmc/langchaingo v0.1.14
 ### LLM Client Architecture
 
 **Two Model Instances:**
-- **Flash Model** (`gemini-2.0-flash-exp`) - Fast, efficient for segmentation, narration, prompts
-- **Pro Model** (`gemini-2.0-flash-thinking-exp-01-21`) - Advanced reasoning for complex tasks
+- **Flash Model** (`gemini-2.5-flash-lite`) - Image prompt generation (fast, cost-effective)
+- **Pro Model** (`gemini-3-pro-preview`) - Segmentation, narration/audio scripting (higher quality)
 
 **Initialization:**
 ```go
 llmClient := llm.NewClient(
     cfg.GeminiAPIKey,
-    cfg.GeminiModelFlash,  // "gemini-2.0-flash-exp"
-    cfg.GeminiModelPro,    // "gemini-2.0-flash-thinking-exp-01-21"
+    cfg.GeminiModelFlash,  // "gemini-2.5-flash-lite"
+    cfg.GeminiModelPro,    // "gemini-3-pro-preview" (segmentation, narration)
     cfg.GeminiModelImage,  // "gemini-3-pro-image-preview" for image generation
     cfg.GeminiModelTTS,    // "gemini-2.5-pro-preview-tts" for TTS
     cfg.GeminiTTSVoice,    // "Zephyr", "Puck", "Aoede", etc.
@@ -167,11 +167,11 @@ Config: `GEMINI_MODEL_IMAGE`.
 Every LLM call has a fallback:
 
 ```go
-if c.llmFlash == nil {
+if c.llmPro == nil {
     return c.fallbackSegmentation(text, picturesCount)
 }
 
-response, err := llms.GenerateFromSinglePrompt(ctx, c.llmFlash, prompt)
+response, err := llms.GenerateFromSinglePrompt(ctx, c.llmPro, prompt)
 if err != nil {
     log.Error().Err(err).Msg("Gemini failed, using fallback")
     return c.fallbackSegmentation(text, picturesCount)
@@ -226,18 +226,14 @@ GEMINI_MODEL_PRO=gemini-2.0-flash-thinking-exp-01-21
 
 ### Model Selection Guide
 
-**Flash Model (Fast):**
+**Pro Model (Gemini 3 Pro):**
 - Text segmentation
-- Narration generation  
-- Image prompt creation
-- Cost-effective
-- Low latency
+- Narration / audio scripting
+- Higher quality, better structure
 
-**Pro Model (Advanced):**
-- Complex reasoning tasks
-- Future: Multi-modal analysis
-- Higher quality outputs
-- More expensive
+**Flash Model:**
+- Image prompt creation (fast, cost-effective)
+- Lower latency
 
 ## Usage Examples
 
@@ -291,8 +287,8 @@ prompt, err := llmClient.GenerateImagePrompt(
 
 | Operation | Model | Typical Time |
 |-----------|-------|--------------|
-| Segmentation | Flash | 2-5 seconds |
-| Narration | Flash | 1-3 seconds |
+| Segmentation | Pro | 2-8 seconds |
+| Narration | Pro | 1-5 seconds |
 | Image Prompt | Flash | 1-2 seconds |
 | Fallback | N/A | <100ms |
 

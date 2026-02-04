@@ -223,8 +223,8 @@ func (c *Client) SegmentText(ctx context.Context, text string, picturesCount int
 		Int("text_length", len(text)).
 		Msg("Segmenting text")
 
-	// Use Gemini to intelligently segment the text
-	if c.llmFlash == nil {
+	// Use Gemini 3 Pro to intelligently segment the text
+	if c.llmPro == nil {
 		return c.fallbackSegmentation(text, picturesCount)
 	}
 
@@ -266,13 +266,13 @@ Return JSON in this exact format:
 TEXT TO SEGMENT:
 %s`, picturesCount, styleGuidance, text)
 
-	// Call Gemini
-	response, err := llms.GenerateFromSinglePrompt(ctx, c.llmFlash, prompt,
+	// Call Gemini 3 Pro
+	response, err := llms.GenerateFromSinglePrompt(ctx, c.llmPro, prompt,
 		llms.WithTemperature(0.3),
 		llms.WithMaxTokens(2000),
 	)
 	if err != nil {
-		log.Error().Err(err).Msg("Gemini segmentation failed, using fallback")
+		log.Error().Err(err).Msg("Gemini Pro segmentation failed, using fallback")
 		return c.fallbackSegmentation(text, picturesCount)
 	}
 
@@ -381,8 +381,8 @@ func (c *Client) GenerateNarration(ctx context.Context, text, audioType, inputTy
 		Str("input_type", inputType).
 		Msg("Generating narration")
 
-	// Use Gemini to generate natural narration
-	if c.llmFlash == nil {
+	// Use Gemini 3 Pro to generate natural narration
+	if c.llmPro == nil {
 		return c.fallbackNarration(text, audioType, inputType), nil
 	}
 
@@ -417,13 +417,13 @@ Generate a natural narration script that would sound good when read aloud.
 Make it engaging and appropriate for the content type.
 Return ONLY the narration text, no explanations or formatting.`, styleGuidance, audioStyle, text)
 
-	// Call Gemini
-	response, err := llms.GenerateFromSinglePrompt(ctx, c.llmFlash, prompt,
+	// Call Gemini 3 Pro
+	response, err := llms.GenerateFromSinglePrompt(ctx, c.llmPro, prompt,
 		llms.WithTemperature(0.7),
 		llms.WithMaxTokens(1000),
 	)
 	if err != nil {
-		log.Error().Err(err).Msg("Gemini narration generation failed, using fallback")
+		log.Error().Err(err).Msg("Gemini Pro narration generation failed, using fallback")
 		return c.fallbackNarration(text, audioType, inputType), nil
 	}
 
