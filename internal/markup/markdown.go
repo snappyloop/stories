@@ -12,13 +12,20 @@ func MarkdownToHTML(text string) string {
 	if text == "" {
 		return text
 	}
+	// Escape all HTML upfront to prevent XSS, then process markdown patterns.
+	// Pattern handlers do NOT re-escape since input is already safe.
+	return processMarkdown(escapeHTMLForMarkdown(text))
+}
 
+// processMarkdown converts markdown syntax to HTML tags.
+// IMPORTANT: Input MUST already be HTML-escaped. This function does not escape.
+func processMarkdown(text string) string {
 	result := text
 
 	// At-line-start headers: #### → h4, ### → h3, ## → h2, # → h1 (process longest first)
 	for _, pair := range []struct {
-		re   *regexp.Regexp
-		tag  string
+		re  *regexp.Regexp
+		tag string
 	}{
 		{regexp.MustCompile(`(?m)^#### (.+)$`), "h4"},
 		{regexp.MustCompile(`(?m)^### (.+)$`), "h3"},
@@ -30,7 +37,7 @@ func MarkdownToHTML(text string) string {
 			if len(sub) < 2 {
 				return match
 			}
-			return "<" + pair.tag + ">" + escapeHTMLForMarkdown(strings.TrimSpace(sub[1])) + "</" + pair.tag + ">"
+			return "<" + pair.tag + ">" + strings.TrimSpace(sub[1]) + "</" + pair.tag + ">"
 		})
 	}
 
@@ -38,17 +45,18 @@ func MarkdownToHTML(text string) string {
 	result = convertMarkdownLists(result)
 
 	// Process in order: code blocks -> inline code -> links -> bold -> italic -> strikethrough
+	// NOTE: Input is already HTML-escaped, so we do NOT call escapeHTMLForMarkdown here.
 	codeBlockRegex := regexp.MustCompile("(?s)```([^`]+)```")
 	result = codeBlockRegex.ReplaceAllStringFunc(result, func(match string) string {
 		code := codeBlockRegex.FindStringSubmatch(match)[1]
 		code = strings.Trim(code, "\n\r")
-		return "<pre>" + escapeHTMLForMarkdown(code) + "</pre>"
+		return "<pre>" + code + "</pre>"
 	})
 
 	inlineCodeRegex := regexp.MustCompile("`([^`\n]+)`")
 	result = inlineCodeRegex.ReplaceAllStringFunc(result, func(match string) string {
 		code := inlineCodeRegex.FindStringSubmatch(match)[1]
-		return "<code>" + escapeHTMLForMarkdown(code) + "</code>"
+		return "<code>" + code + "</code>"
 	})
 
 	linkRegex := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
@@ -56,19 +64,19 @@ func MarkdownToHTML(text string) string {
 		matches := linkRegex.FindStringSubmatch(match)
 		linkText := matches[1]
 		url := matches[2]
-		return "<a href=\"" + escapeHTMLForMarkdown(url) + "\">" + escapeHTMLForMarkdown(linkText) + "</a>"
+		return "<a href=\"" + url + "\">" + linkText + "</a>"
 	})
 
 	boldDoubleAsteriskRegex := regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	result = boldDoubleAsteriskRegex.ReplaceAllStringFunc(result, func(match string) string {
 		content := boldDoubleAsteriskRegex.FindStringSubmatch(match)[1]
-		return "<b>" + escapeHTMLForMarkdown(content) + "</b>"
+		return "<b>" + content + "</b>"
 	})
 
 	boldDoubleUnderscoreRegex := regexp.MustCompile(`__([^_]+)__`)
 	result = boldDoubleUnderscoreRegex.ReplaceAllStringFunc(result, func(match string) string {
 		content := boldDoubleUnderscoreRegex.FindStringSubmatch(match)[1]
-		return "<b>" + escapeHTMLForMarkdown(content) + "</b>"
+		return "<b>" + content + "</b>"
 	})
 
 	// Italic: single * (avoid emoji asterisks)
@@ -101,10 +109,10 @@ func MarkdownToHTML(text string) string {
 							break
 						}
 					}
-					if hasLetterOrNumber {
-						newResult.WriteString("<i>")
-						newResult.WriteString(escapeHTMLForMarkdown(content))
-						newResult.WriteString("</i>")
+				if hasLetterOrNumber {
+					newResult.WriteString("<i>")
+					newResult.WriteString(content)
+					newResult.WriteString("</i>")
 						i = j + 1
 						found = true
 						break
@@ -139,13 +147,13 @@ func MarkdownToHTML(text string) string {
 		if !hasLetterOrNumber {
 			return match
 		}
-		return "<i>" + escapeHTMLForMarkdown(content) + "</i>"
+		return "<i>" + content + "</i>"
 	})
 
 	strikethroughRegex := regexp.MustCompile(`~~([^~]+)~~`)
 	result = strikethroughRegex.ReplaceAllStringFunc(result, func(match string) string {
 		content := strikethroughRegex.FindStringSubmatch(match)[1]
-		return "<s>" + escapeHTMLForMarkdown(content) + "</s>"
+		return "<s>" + content + "</s>"
 	})
 
 	return result
@@ -154,6 +162,8 @@ func MarkdownToHTML(text string) string {
 // convertMarkdownLists turns consecutive list lines into <ul>/<ol> and <li>.
 // Unordered: lines starting with - , * , or + .
 // Ordered: lines starting with 1. , 2. , etc.
+// IMPORTANT: Input MUST already be HTML-escaped. Recursive calls use processMarkdown (not MarkdownToHTML)
+// to avoid double-escaping.
 func convertMarkdownLists(text string) string {
 	lines := strings.Split(text, "\n")
 	ulPrefix := regexp.MustCompile(`^[-*+] (.+)$`)
@@ -167,7 +177,8 @@ func convertMarkdownLists(text string) string {
 			var items []string
 			for i < len(lines) {
 				if sub := ulPrefix.FindStringSubmatch(lines[i]); sub != nil {
-					items = append(items, MarkdownToHTML(sub[1]))
+					// Use processMarkdown (not MarkdownToHTML) to avoid double-escaping
+					items = append(items, processMarkdown(sub[1]))
 					i++
 				} else {
 					break
@@ -186,7 +197,8 @@ func convertMarkdownLists(text string) string {
 			var items []string
 			for i < len(lines) {
 				if sub := olPrefix.FindStringSubmatch(lines[i]); sub != nil {
-					items = append(items, MarkdownToHTML(sub[2]))
+					// Use processMarkdown (not MarkdownToHTML) to avoid double-escaping
+					items = append(items, processMarkdown(sub[2]))
 					i++
 				} else {
 					break
@@ -201,6 +213,7 @@ func convertMarkdownLists(text string) string {
 			out.WriteString("</ol>\n")
 			continue
 		}
+		// Plain line - already escaped by MarkdownToHTML, write as-is
 		out.WriteString(line)
 		if i < len(lines)-1 {
 			out.WriteString("\n")
