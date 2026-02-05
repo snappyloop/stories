@@ -17,7 +17,8 @@ func ToHTML(markup, jobID string) string {
 	jobID = html.EscapeString(jobID)
 
 	// Skip SOURCE blocks (excluded from view output)
-	sourceRe := regexp.MustCompile(`(?s)\[\[SOURCE file_id=[^ \]]+\s+filename="[^"]*"\]\](.*?)\[\[/SOURCE\]\]`)
+	// Pattern uses (?:[^"\\]|\\.)* to handle escaped quotes in filenames (e.g. filename="test\"file.pdf")
+	sourceRe := regexp.MustCompile(`(?s)\[\[SOURCE file_id=[^ \]]+\s+filename="(?:[^"\\]|\\.)*"\]\](.*?)\[\[/SOURCE\]\]`)
 	idx := 0
 	for _, m := range sourceRe.FindAllStringSubmatchIndex(markup, -1) {
 		out.WriteString(html.EscapeString(markup[idx:m[0]]))
