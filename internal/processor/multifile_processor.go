@@ -65,7 +65,6 @@ func (p *MultiFileProcessor) Process(ctx context.Context, job *models.Job, jobFi
 		if err != nil {
 			log.Error().Err(err).Str("file_id", jf.FileID.String()).Msg("Failed to get file for extraction")
 			_ = p.jobFileRepo.UpdateExtraction(ctx, jf.ID, nil, "failed")
-			_ = p.fileRepo.Delete(ctx, jf.FileID)
 			return "", fmt.Errorf("file %s: %w", jf.FileID.String(), err)
 		}
 
@@ -73,14 +72,12 @@ func (p *MultiFileProcessor) Process(ctx context.Context, job *models.Job, jobFi
 		if err != nil {
 			log.Error().Err(err).Str("s3_key", file.S3Key).Msg("Failed to download file from S3")
 			_ = p.jobFileRepo.UpdateExtraction(ctx, jf.ID, nil, "failed")
-			_ = p.fileRepo.Delete(ctx, file.ID)
 			return "", fmt.Errorf("download file %s: %w", file.Filename, err)
 		}
 		data, err := io.ReadAll(rc)
 		_ = rc.Close()
 		if err != nil {
 			_ = p.jobFileRepo.UpdateExtraction(ctx, jf.ID, nil, "failed")
-			_ = p.fileRepo.Delete(ctx, file.ID)
 			return "", fmt.Errorf("read file %s: %w", file.Filename, err)
 		}
 
@@ -88,7 +85,6 @@ func (p *MultiFileProcessor) Process(ctx context.Context, job *models.Job, jobFi
 		if err != nil {
 			log.Error().Err(err).Str("file_id", jf.FileID.String()).Msg("Gemini vision extraction failed")
 			_ = p.jobFileRepo.UpdateExtraction(ctx, jf.ID, nil, "failed")
-			_ = p.fileRepo.Delete(ctx, file.ID)
 			return "", fmt.Errorf("extract %s: %w", file.Filename, err)
 		}
 
