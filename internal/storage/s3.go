@@ -38,9 +38,13 @@ func NewClient(endpoint, region, bucket, accessKey, secretKey string, useSSL boo
 		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
-	// Create S3 client with path-style addressing for MinIO compatibility
+	// Create S3 client with path-style addressing for MinIO compatibility.
+	// Disable automatic request checksums and response validation so S3-compatible
+	// backends (e.g. Cloudflare R2) that don't fully support CRC32 headers work correctly.
 	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.UsePathStyle = true
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	})
 
 	log.Info().
