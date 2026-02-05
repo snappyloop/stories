@@ -2,7 +2,27 @@
 
 An API-first service that enriches text into segmented content with per-segment images and audio narration.
 
+---
+
+## Google Gemini 3 integration
+
+This project is built for the [Gemini 3 Hackathon](https://gemini3.devpost.com) and **uses multiple Gemini 3 models** across the pipeline:
+
+| Use case | Model | Role |
+|----------|--------|------|
+| **Text segmentation** | `gemini-3.0-flash` (primary), `gemini-2.5-flash-lite` (fallback) | Splits content into logical segments with titles and bounds |
+| **Image generation** | `gemini-3-pro-image-preview` | Native image output via `ResponseModality: ["IMAGE"]` |
+| **Narration scripts** | `gemini-3-pro-preview` | Style-adapted narration for TTS (educational / financial / fictional) |
+| **Text-to-speech** | `gemini-2.5-pro-preview-tts` | Audio output with configurable voice (e.g. Zephyr, Puck, Aoede) |
+| **Multi-modal input** | Gemini Pro vision | Extract/summarize text from uploaded images and PDFs |
+
+The **Jobs Processor** (worker) calls these models to segment input, generate per-segment narration, produce TTS audio, create image prompts, and generate images. See [doc/GEMINI_INTEGRATION.md](./doc/GEMINI_INTEGRATION.md) for details.
+
+---
+
 ## Architecture
+
+![Architecture diagram](./doc/architecture.png)
 
 See [doc/architecture.md](./doc/architecture.md) for detailed system design, [doc/requirements.md](./doc/requirements.md) for functional requirements, [doc/setup-and-development.md](./doc/setup-and-development.md) for setup, and [doc/webhooks.md](./doc/webhooks.md) for webhook delivery.
 

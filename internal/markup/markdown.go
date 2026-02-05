@@ -116,10 +116,10 @@ func processMarkdown(text string) string {
 							break
 						}
 					}
-				if hasLetterOrNumber {
-					newResult.WriteString("<i>")
-					newResult.WriteString(content)
-					newResult.WriteString("</i>")
+					if hasLetterOrNumber {
+						newResult.WriteString("<i>")
+						newResult.WriteString(content)
+						newResult.WriteString("</i>")
 						i = j + 1
 						found = true
 						break

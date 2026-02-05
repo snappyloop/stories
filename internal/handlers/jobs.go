@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -21,9 +22,19 @@ import (
 	"github.com/snappy-loop/stories/internal/storage"
 )
 
+// jobService is the subset of JobService used by job handlers (for testability).
+type jobService interface {
+	CreateJob(ctx context.Context, req *models.CreateJobRequest, userID, apiKeyID uuid.UUID) (*models.CreateJobResponse, error)
+	GetJob(ctx context.Context, jobID, userID uuid.UUID) (*models.JobStatusResponse, error)
+	GetJobByID(ctx context.Context, jobID uuid.UUID) (*models.JobStatusResponse, error)
+	ListJobs(ctx context.Context, userID uuid.UUID, limit int, cursor *time.Time) ([]*models.Job, error)
+	GetAsset(ctx context.Context, assetID, userID uuid.UUID) (*models.Asset, error)
+	GetAssetByJobID(ctx context.Context, assetID, jobID uuid.UUID) (*models.Asset, error)
+}
+
 // Handler contains all HTTP handlers
 type Handler struct {
-	jobService         *services.JobService
+	jobService         jobService
 	fileService        *services.FileService
 	storage            *storage.Client
 	userRepo           *database.UserRepository
@@ -35,7 +46,7 @@ type Handler struct {
 
 // NewHandler creates a new handler
 func NewHandler(
-	jobService *services.JobService,
+	jobService jobService,
 	fileService *services.FileService,
 	storage *storage.Client,
 	userRepo *database.UserRepository,
