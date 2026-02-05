@@ -89,7 +89,8 @@ func (s *JobService) CreateJob(ctx context.Context, req *models.CreateJobRequest
 		}
 	}
 
-	// Validate files exist and belong to user
+	// Validate files exist, belong to user, are ready, and not expired
+	now := time.Now()
 	for _, fileID := range req.FileIDs {
 		file, err := s.fileRepo.GetByIDAndUser(ctx, fileID, userID)
 		if err != nil {
@@ -97,6 +98,9 @@ func (s *JobService) CreateJob(ctx context.Context, req *models.CreateJobRequest
 		}
 		if file.Status != "ready" {
 			return nil, fmt.Errorf("file %s is not available (status: %s)", fileID.String(), file.Status)
+		}
+		if !file.ExpiresAt.IsZero() && file.ExpiresAt.Before(now) {
+			return nil, fmt.Errorf("file %s has expired", fileID.String())
 		}
 	}
 
