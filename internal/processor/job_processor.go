@@ -3,6 +3,7 @@ package processor
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -195,17 +196,25 @@ func (p *JobProcessor) processJobPipeline(ctx context.Context, job *models.Job) 
 		return fmt.Errorf("segmentation failed: %w", err)
 	}
 
-	// Save segments to database and keep their IDs for asset foreign keys
+	// Save segments to database and keep their IDs for asset foreign keys.
+	// Sanitize text to valid UTF-8 so PostgreSQL never sees invalid byte sequences.
 	segmentIDs := make([]uuid.UUID, len(segments))
 	for i, seg := range segments {
+		titleVal := ""
+		if seg.Title != nil {
+			titleVal = strings.ToValidUTF8(*seg.Title, "\uFFFD")
+		}
+		if titleVal == "" {
+			titleVal = fmt.Sprintf("Part %d", i+1)
+		}
 		segment := &models.Segment{
 			ID:          uuid.New(),
 			JobID:       job.ID,
 			Idx:         i,
 			StartChar:   seg.StartChar,
 			EndChar:     seg.EndChar,
-			Title:       seg.Title,
-			SegmentText: seg.Text,
+			Title:       &titleVal,
+			SegmentText: strings.ToValidUTF8(seg.Text, "\uFFFD"),
 			Status:      "queued",
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),

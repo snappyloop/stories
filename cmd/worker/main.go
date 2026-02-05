@@ -82,6 +82,8 @@ func main() {
 		cfg.GeminiModelTTS,
 		cfg.GeminiTTSVoice,
 		cfg.GeminiAPIEndpoint,
+		cfg.GeminiModelSegmentPrimary,
+		cfg.GeminiModelSegmentFallback,
 	)
 
 	// Initialize Kafka producer for webhook events

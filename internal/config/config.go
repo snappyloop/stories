@@ -38,8 +38,10 @@ type Config struct {
 	GeminiModelPro    string
 	GeminiModelFlash  string
 	GeminiModelImage  string // image generation, e.g. gemini-3-pro-image-preview
-	GeminiModelTTS    string // TTS model, e.g. gemini-2.5-pro-preview-tts
-	GeminiTTSVoice    string // TTS voice name, e.g. Zephyr, Puck, Aoede
+	GeminiModelTTS             string // TTS model, e.g. gemini-2.5-pro-preview-tts
+	GeminiTTSVoice             string // TTS voice name, e.g. Zephyr, Puck, Aoede
+	GeminiModelSegmentPrimary   string // primary model for segmentation, e.g. gemini-3.0-flash
+	GeminiModelSegmentFallback  string // fallback model for segmentation, e.g. gemini-2.5-flash-lite
 
 	// Processing
 	MaxInputLength        int
@@ -96,8 +98,10 @@ func Load() *Config {
 		GeminiModelPro:    getEnv("GEMINI_MODEL_PRO", "gemini-3-pro-preview"),
 		GeminiModelFlash:  getEnv("GEMINI_MODEL_FLASH", "gemini-2.5-flash-lite"),
 		GeminiModelImage:  getEnv("GEMINI_MODEL_IMAGE", "gemini-3-pro-image-preview"),
-		GeminiModelTTS:    getEnv("GEMINI_MODEL_TTS", "gemini-2.5-pro-preview-tts"),
-		GeminiTTSVoice:    getEnv("GEMINI_TTS_VOICE", "Zephyr"),
+		GeminiModelTTS:            getEnv("GEMINI_MODEL_TTS", "gemini-2.5-pro-preview-tts"),
+		GeminiTTSVoice:            getEnv("GEMINI_TTS_VOICE", "Zephyr"),
+		GeminiModelSegmentPrimary:  getEnv("GEMINI_MODEL_SEGMENT_PRIMARY", "gemini-3.0-flash"),
+		GeminiModelSegmentFallback: getEnv("GEMINI_MODEL_SEGMENT_FALLBACK", "gemini-2.5-flash-lite"),
 
 		MaxInputLength:        getEnvInt("MAX_INPUT_LENGTH", 50000),
 		MaxPicturesCount:      getEnvInt("MAX_PICTURES_COUNT", 20),
