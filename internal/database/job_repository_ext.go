@@ -33,3 +33,14 @@ func (r *JobRepository) UpdateMarkup(ctx context.Context, jobID uuid.UUID, marku
 	_, err := r.db.ExecContext(ctx, query, markup, jobID)
 	return err
 }
+
+// UpdateExtractedText updates a job's extracted_text (from file processing)
+func (r *JobRepository) UpdateExtractedText(ctx context.Context, jobID uuid.UUID, extractedText *string) error {
+	query := `
+		UPDATE jobs
+		SET extracted_text = $1
+		WHERE id = $2
+	`
+	_, err := r.db.ExecContext(ctx, query, extractedText, jobID)
+	return err
+}

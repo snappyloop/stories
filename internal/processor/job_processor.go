@@ -3,6 +3,7 @@ package processor
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,9 @@ type JobProcessor struct {
 	jobRepo         *database.JobRepository
 	segmentRepo     *database.SegmentRepository
 	assetRepo       *database.AssetRepository
+	jobFileRepo     *database.JobFileRepository
+	fileRepo        *database.FileRepository
+	inputRegistry   *InputProcessorRegistry
 	llmClient       *llm.Client
 	storageClient   *storage.Client
 	webhookProducer *kafka.Producer
@@ -35,12 +39,18 @@ func NewJobProcessor(
 	storageClient *storage.Client,
 	webhookProducer *kafka.Producer,
 	cfg *config.Config,
+	inputRegistry *InputProcessorRegistry,
+	jobFileRepo *database.JobFileRepository,
+	fileRepo *database.FileRepository,
 ) *JobProcessor {
 	return &JobProcessor{
 		db:              db,
 		jobRepo:         database.NewJobRepository(db),
 		segmentRepo:     database.NewSegmentRepository(db),
 		assetRepo:       database.NewAssetRepository(db),
+		jobFileRepo:     jobFileRepo,
+		fileRepo:        fileRepo,
+		inputRegistry:   inputRegistry,
 		llmClient:       llmClient,
 		storageClient:   storageClient,
 		webhookProducer: webhookProducer,
@@ -152,24 +162,70 @@ func (p *JobProcessor) ProcessJob(ctx context.Context, jobID uuid.UUID) error {
 
 // processJobPipeline executes the full processing pipeline
 func (p *JobProcessor) processJobPipeline(ctx context.Context, job *models.Job) error {
-	// Step 1: Segment the text
+	// Step 0: Resolve input to text. For files/mixed, extract from files via vision and combine with optional input text.
+	// The result (including all extracted file text) is segmented and used for narration, audio, and images.
+	textToSegment := job.InputText
+	if job.InputSource == "files" || job.InputSource == "mixed" {
+		if p.inputRegistry == nil {
+			return fmt.Errorf("input processor required for input_source=%s", job.InputSource)
+		}
+		processor := p.inputRegistry.GetProcessor(job.InputSource)
+		if processor == nil {
+			return fmt.Errorf("no input processor for input_source=%s (extracted text would not be used)", job.InputSource)
+		}
+		jobFiles, err := p.jobFileRepo.ListByJob(ctx, job.ID)
+		if err != nil {
+			return fmt.Errorf("failed to list job files: %w", err)
+		}
+		combined, err := processor.Process(ctx, job, jobFiles)
+		if err != nil {
+			return fmt.Errorf("input processing failed: %w", err)
+		}
+		textToSegment = combined
+		if strings.TrimSpace(textToSegment) == "" || textToSegment == "[pending extraction]" {
+			return fmt.Errorf("no text to segment for input_source=%s (extraction returned empty or pending)", job.InputSource)
+		}
+		if err := p.jobRepo.UpdateExtractedText(ctx, job.ID, &combined); err != nil {
+			log.Warn().Err(err).Msg("Failed to update job extracted_text")
+		}
+		job.ExtractedText = &combined
+	} else if p.inputRegistry != nil {
+		processor := p.inputRegistry.GetProcessor(job.InputSource)
+		if processor != nil {
+			combined, err := processor.Process(ctx, job, nil)
+			if err != nil {
+				return fmt.Errorf("input processing failed: %w", err)
+			}
+			textToSegment = combined
+		}
+	}
+
+	// Step 1: Segment the text (includes extracted file content when input is files/mixed)
 	log.Info().Str("job_id", job.ID.String()).Msg("Step 1: Segmenting text")
-	segments, err := p.llmClient.SegmentText(ctx, job.InputText, job.PicturesCount, job.InputType)
+	segments, err := p.llmClient.SegmentText(ctx, textToSegment, job.PicturesCount, job.InputType)
 	if err != nil {
 		return fmt.Errorf("segmentation failed: %w", err)
 	}
 
-	// Save segments to database and keep their IDs for asset foreign keys
+	// Save segments to database and keep their IDs for asset foreign keys.
+	// Sanitize text to valid UTF-8 so PostgreSQL never sees invalid byte sequences.
 	segmentIDs := make([]uuid.UUID, len(segments))
 	for i, seg := range segments {
+		titleVal := ""
+		if seg.Title != nil {
+			titleVal = strings.ToValidUTF8(*seg.Title, "\uFFFD")
+		}
+		if titleVal == "" {
+			titleVal = fmt.Sprintf("Part %d", i+1)
+		}
 		segment := &models.Segment{
 			ID:          uuid.New(),
 			JobID:       job.ID,
 			Idx:         i,
 			StartChar:   seg.StartChar,
 			EndChar:     seg.EndChar,
-			Title:       seg.Title,
-			SegmentText: seg.Text,
+			Title:       &titleVal,
+			SegmentText: strings.ToValidUTF8(seg.Text, "\uFFFD"),
 			Status:      "queued",
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
@@ -378,8 +434,18 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 	return nil
 }
 
-// generateOutputMarkup generates the final markup with asset references
+// generateOutputMarkup generates the final markup with asset references and file sources
 func (p *JobProcessor) generateOutputMarkup(ctx context.Context, jobID uuid.UUID) (string, error) {
+	// Get job files (for SOURCE blocks)
+	var jobFiles []*models.JobFile
+	if p.jobFileRepo != nil {
+		var err error
+		jobFiles, err = p.jobFileRepo.ListByJob(ctx, jobID)
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to list job files for markup")
+		}
+	}
+
 	// Get all segments
 	segments, err := p.segmentRepo.ListByJob(ctx, jobID)
 	if err != nil {
@@ -400,8 +466,22 @@ func (p *JobProcessor) generateOutputMarkup(ctx context.Context, jobID uuid.UUID
 		}
 	}
 
-	// Generate markup
+	// Generate markup: SOURCE blocks first (file extractions)
 	markup := ""
+	for _, jf := range jobFiles {
+		if jf.ExtractedText != nil && *jf.ExtractedText != "" {
+			filename := ""
+			if p.fileRepo != nil {
+				file, err := p.fileRepo.GetByID(ctx, jf.FileID)
+				if err == nil {
+					filename = file.Filename
+				}
+			}
+			markup += fmt.Sprintf("[[SOURCE file_id=%s filename=%q]]\n", jf.FileID, filename)
+			markup += *jf.ExtractedText + "\n[[/SOURCE]]\n\n"
+		}
+	}
+
 	for _, segment := range segments {
 		markup += fmt.Sprintf("[[SEGMENT id=%s]]\n", segment.ID)
 

@@ -27,6 +27,9 @@ import (
 // maxGeminiResponseLogBytes is the max length of a Gemini response body to log in full (to avoid huge logs).
 const maxGeminiResponseLogBytes = 8192
 
+// maxSegmentInputLogBytes is the max length of segmentation prompt to log (input to SegmentText LLM call).
+const maxSegmentInputLogBytes = 4096
+
 // httpClientForEndpoint returns an http.Client that rewrites request URLs to the given base endpoint (e.g. http://host.docker.internal:31300/gemini).
 func httpClientForEndpoint(baseEndpoint string) *http.Client {
 	base, err := url.Parse(baseEndpoint)
@@ -71,24 +74,26 @@ func logGeminiResponse(caller, raw string) {
 
 // Client wraps Gemini API client
 type Client struct {
-	apiKey        string
-	modelFlash    string
-	modelPro      string
-	modelImage    string // image generation, e.g. gemini-3-pro-image-preview
-	modelTTS      string // TTS model, e.g. gemini-2.5-pro-preview-tts
-	ttsVoice      string // TTS voice name, e.g. Zephyr, Puck, Aoede
-	llmFlash      llms.Model
-	llmPro        llms.Model
-	genaiClient   *genai.Client        // for image modality via genai SDK
-	unifiedClient *unifiedgenai.Client // unified genai SDK for TTS
+	apiKey               string
+	modelFlash           string
+	modelPro             string
+	modelImage           string // image generation, e.g. gemini-3-pro-image-preview
+	modelTTS             string // TTS model, e.g. gemini-2.5-pro-preview-tts
+	ttsVoice             string // TTS voice name, e.g. Zephyr, Puck, Aoede
+	modelSegmentPrimary  string // e.g. gemini-3.0-flash
+	modelSegmentFallback string // e.g. gemini-2.5-flash-lite
+	llmFlash             llms.Model
+	llmPro               llms.Model
+	llmSegmentPrimary    llms.Model           // primary for segmentation
+	llmSegmentFallback   llms.Model           // fallback for segmentation
+	genaiClient          *genai.Client        // for image modality and segment schema
+	unifiedClient        *unifiedgenai.Client // unified genai SDK for TTS
 }
 
 // NewClient creates a new LLM client.
 // apiEndpoint: optional Gemini API base URL (e.g. http://host.docker.internal:31300/gemini); when set, all Gemini calls use this endpoint.
-// modelImage: image generation model (e.g. gemini-3-pro-image-preview); empty => default.
-// modelTTS: TTS model (e.g. gemini-2.5-pro-preview-tts); empty => default.
-// ttsVoice: TTS voice name (e.g. Zephyr, Puck, Aoede); empty => Zephyr.
-func NewClient(apiKey, modelFlash, modelPro, modelImage, modelTTS, ttsVoice, apiEndpoint string) *Client {
+// modelSegmentPrimary/modelSegmentFallback: models for segmentation (e.g. gemini-3.0-flash, gemini-2.5-flash-lite).
+func NewClient(apiKey, modelFlash, modelPro, modelImage, modelTTS, ttsVoice, apiEndpoint, modelSegmentPrimary, modelSegmentFallback string) *Client {
 	if modelImage == "" {
 		modelImage = "gemini-3-pro-image-preview"
 	}
@@ -97,6 +102,12 @@ func NewClient(apiKey, modelFlash, modelPro, modelImage, modelTTS, ttsVoice, api
 	}
 	if ttsVoice == "" {
 		ttsVoice = "Zephyr"
+	}
+	if modelSegmentPrimary == "" {
+		modelSegmentPrimary = "gemini-3.0-flash"
+	}
+	if modelSegmentFallback == "" {
+		modelSegmentFallback = "gemini-2.5-flash-lite"
 	}
 
 	// Optional custom HTTP client for langchaingo when using a custom endpoint
@@ -123,6 +134,26 @@ func NewClient(apiKey, modelFlash, modelPro, modelImage, modelTTS, ttsVoice, api
 	llmPro, err := googleai.New(context.Background(), proOpts...)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to initialize pro model, using fallback")
+	}
+
+	// Segment primary (e.g. 3.0 flash)
+	segPrimaryOpts := []googleai.Option{googleai.WithAPIKey(apiKey), googleai.WithDefaultModel(modelSegmentPrimary)}
+	if langchaingoHTTPClient != nil {
+		segPrimaryOpts = append(segPrimaryOpts, googleai.WithHTTPClient(langchaingoHTTPClient))
+	}
+	llmSegmentPrimary, err := googleai.New(context.Background(), segPrimaryOpts...)
+	if err != nil {
+		log.Error().Err(err).Str("model", modelSegmentPrimary).Msg("Failed to initialize segment primary model")
+	}
+
+	// Segment fallback (e.g. 2.5 flash)
+	segFallbackOpts := []googleai.Option{googleai.WithAPIKey(apiKey), googleai.WithDefaultModel(modelSegmentFallback)}
+	if langchaingoHTTPClient != nil {
+		segFallbackOpts = append(segFallbackOpts, googleai.WithHTTPClient(langchaingoHTTPClient))
+	}
+	llmSegmentFallback, err := googleai.New(context.Background(), segFallbackOpts...)
+	if err != nil {
+		log.Error().Err(err).Str("model", modelSegmentFallback).Msg("Failed to initialize segment fallback model")
 	}
 
 	// genai client for strict modality (IMAGE); requires API key
@@ -154,6 +185,8 @@ func NewClient(apiKey, modelFlash, modelPro, modelImage, modelTTS, ttsVoice, api
 	log.Info().
 		Str("model_flash", modelFlash).
 		Str("model_pro", modelPro).
+		Str("model_segment_primary", modelSegmentPrimary).
+		Str("model_segment_fallback", modelSegmentFallback).
 		Str("model_image", modelImage).
 		Str("model_tts", modelTTS).
 		Str("tts_voice", ttsVoice).
@@ -163,16 +196,20 @@ func NewClient(apiKey, modelFlash, modelPro, modelImage, modelTTS, ttsVoice, api
 		Msg("LLM client initialized")
 
 	return &Client{
-		apiKey:        apiKey,
-		modelFlash:    modelFlash,
-		modelPro:      modelPro,
-		modelImage:    modelImage,
-		modelTTS:      modelTTS,
-		ttsVoice:      ttsVoice,
-		llmFlash:      llmFlash,
-		llmPro:        llmPro,
-		genaiClient:   genaiClient,
-		unifiedClient: unifiedClient,
+		apiKey:               apiKey,
+		modelFlash:           modelFlash,
+		modelPro:             modelPro,
+		modelImage:           modelImage,
+		modelTTS:             modelTTS,
+		ttsVoice:             ttsVoice,
+		modelSegmentPrimary:  modelSegmentPrimary,
+		modelSegmentFallback: modelSegmentFallback,
+		llmFlash:             llmFlash,
+		llmPro:               llmPro,
+		llmSegmentPrimary:    llmSegmentPrimary,
+		llmSegmentFallback:   llmSegmentFallback,
+		genaiClient:          genaiClient,
+		unifiedClient:        unifiedClient,
 	}
 }
 
@@ -215,7 +252,8 @@ type Image struct {
 	MimeType   string // e.g. "image/png", "image/jpeg" (from Gemini blob.MIMEType)
 }
 
-// SegmentText segments text into logical parts
+// SegmentText segments text into logical parts.
+// Uses 3.0 flash first, then 2.5 flash; if both fail or return no valid response, returns one segment (whole text).
 func (c *Client) SegmentText(ctx context.Context, text string, picturesCount int, inputType string) ([]*Segment, error) {
 	log.Info().
 		Int("pictures_count", picturesCount).
@@ -223,12 +261,52 @@ func (c *Client) SegmentText(ctx context.Context, text string, picturesCount int
 		Int("text_length", len(text)).
 		Msg("Segmenting text")
 
-	// Use Gemini 3 Pro to intelligently segment the text
-	if c.llmPro == nil {
-		return c.fallbackSegmentation(text, picturesCount)
+	prompt := c.buildSegmentPrompt(text, picturesCount, inputType)
+
+	// Log segmentation request input
+	if len(prompt) <= maxSegmentInputLogBytes {
+		log.Info().
+			Str("caller", "SegmentText").
+			Int("prompt_len", len(prompt)).
+			Str("segment_request_input", prompt).
+			Msg("SegmentText LLM request input")
+	} else {
+		log.Info().
+			Str("caller", "SegmentText").
+			Int("prompt_len", len(prompt)).
+			Str("segment_request_input", prompt[:maxSegmentInputLogBytes]+"... [truncated]").
+			Msg("SegmentText LLM request input")
 	}
 
-	// Build prompt based on content type
+	// Try primary (3.0 flash), then fallback (2.5 flash)
+	for _, tier := range []struct {
+		name      string
+		modelName string
+		langModel llms.Model
+	}{
+		{"primary", c.modelSegmentPrimary, c.llmSegmentPrimary},
+		{"fallback", c.modelSegmentFallback, c.llmSegmentFallback},
+	} {
+		if tier.modelName == "" && tier.langModel == nil {
+			continue
+		}
+		segments, err := c.trySegmentWithModel(ctx, tier.name, tier.modelName, tier.langModel, prompt, text)
+		if err != nil {
+			log.Warn().Err(err).Str("model_tier", tier.name).Msg("Segment model failed, trying next")
+			continue
+		}
+		if segments != nil {
+			return segments, nil
+		}
+	}
+
+	// No response from both: create one segment made of the whole text
+	log.Info().Msg("No valid response from segment models, using single-segment fallback")
+	return c.oneSegmentFallback(text), nil
+}
+
+// buildSegmentPrompt builds the segmentation prompt with structured response instructions.
+func (c *Client) buildSegmentPrompt(text string, picturesCount int, inputType string) string {
 	var styleGuidance string
 	switch inputType {
 	case "educational":
@@ -237,54 +315,115 @@ func (c *Client) SegmentText(ctx context.Context, text string, picturesCount int
 		styleGuidance = "Separate by distinct financial topics or time periods."
 	case "fictional":
 		styleGuidance = "Segment by narrative beats, scenes, or chapters."
+	default:
+		styleGuidance = "Break at natural boundaries (paragraphs, sentences)."
 	}
 
-	prompt := fmt.Sprintf(`You are an expert at analyzing and segmenting text. 
+	return fmt.Sprintf(`You are an expert at analyzing and segmenting text.
 
-Analyze the following text and segment it into exactly %d logical parts. %s
+Your task: segment the following text into exactly %d logical parts. %s
 
-For each segment, provide:
-- start_char: The character position where the segment starts (0-indexed)
-- end_char: The character position where the segment ends
-- title: A short descriptive title for the segment
+Important: The text may contain multiple blocks (e.g. main content and then "---" followed by image or file descriptions). You MUST segment the ENTIRE text from start_char 0 to the last character—every part of the text must be included in some segment.
 
-Important rules:
-1. Segments must cover the entire text with no gaps
-2. Segments must not overlap
-3. start_char of segment N+1 must equal end_char of segment N
-4. Try to break at natural boundaries (paragraphs, sentences)
-5. Return ONLY valid JSON, no explanation
+Structured response requirements:
+- You must respond with a single JSON object only. No markdown, no code fences, no explanation before or after.
+- The JSON must have exactly one key: "segments", an array of objects.
+- Each object must have: "start_char" (number, 0-based byte index), "end_char" (number, exclusive), "title" (string).
+- Rules: segments cover the entire text with no gaps; no overlaps; start_char of segment N+1 equals end_char of segment N; break at natural boundaries.
 
-Return JSON in this exact format:
-{
-  "segments": [
-    {"start_char": 0, "end_char": 150, "title": "Introduction"},
-    {"start_char": 150, "end_char": 350, "title": "Main Point"}
-  ]
-}
+Example valid response:
+{"segments":[{"start_char":0,"end_char":150,"title":"Introduction"},{"start_char":150,"end_char":350,"title":"Main Point"}]}
 
 TEXT TO SEGMENT:
 %s`, picturesCount, styleGuidance, text)
+}
 
-	// Call Gemini 3 Pro
-	response, err := llms.GenerateFromSinglePrompt(ctx, c.llmPro, prompt,
-		llms.WithTemperature(0.3),
-		llms.WithMaxTokens(2000),
-	)
-	if err != nil {
-		log.Error().Err(err).Msg("Gemini Pro segmentation failed, using fallback")
-		return c.fallbackSegmentation(text, picturesCount)
+// extractTextFromGenaiResponse returns the concatenated text from the first candidate's parts.
+func (c *Client) extractTextFromGenaiResponse(resp *genai.GenerateContentResponse) string {
+	if resp == nil || len(resp.Candidates) == 0 || resp.Candidates[0].Content == nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, part := range resp.Candidates[0].Content.Parts {
+		if text, ok := part.(genai.Text); ok {
+			b.WriteString(string(text))
+		}
+	}
+	return b.String()
+}
+
+// segmentResponseSchema returns the genai.Schema for segmentation JSON: {"segments": [{"start_char", "end_char", "title"}, ...]}.
+func segmentResponseSchema() *genai.Schema {
+	return &genai.Schema{
+		Type: genai.TypeObject,
+		Properties: map[string]*genai.Schema{
+			"segments": {
+				Type: genai.TypeArray,
+				Items: &genai.Schema{
+					Type: genai.TypeObject,
+					Properties: map[string]*genai.Schema{
+						"start_char": {Type: genai.TypeInteger, Description: "0-based byte index where segment starts"},
+						"end_char":   {Type: genai.TypeInteger, Description: "Byte index where segment ends (exclusive)"},
+						"title":      {Type: genai.TypeString, Description: "Short descriptive title for the segment"},
+					},
+					Required: []string{"start_char", "end_char", "title"},
+				},
+			},
+		},
+		Required: []string{"segments"},
+	}
+}
+
+// trySegmentWithModel calls the given model and parses the response into segments. Returns (nil, err) on failure, (segments, nil) on success.
+// When genaiClient is available and modelName is set, uses genai with ResponseSchema; otherwise uses langchaingo with JSON MIME type.
+func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, modelName string, langModel llms.Model, prompt, text string) ([]*Segment, error) {
+	var response string
+
+	if c.genaiClient != nil && modelName != "" {
+		// Use genai client with response schema for structured JSON output
+		model := c.genaiClient.GenerativeModel(modelName)
+		model.SetTemperature(0.3)
+		model.SetMaxOutputTokens(2000)
+		model.ResponseMIMEType = "application/json"
+		model.ResponseSchema = segmentResponseSchema()
+
+		resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+		if err != nil {
+			return nil, err
+		}
+		response = c.extractTextFromGenaiResponse(resp)
+	} else if langModel != nil {
+		// Fallback: langchaingo with JSON MIME type (no schema)
+		var err error
+		response, err = llms.GenerateFromSinglePrompt(ctx, langModel, prompt,
+			llms.WithTemperature(0.3),
+			llms.WithMaxTokens(2000),
+			llms.WithResponseMIMEType("application/json"),
+		)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		return nil, fmt.Errorf("no segment model available")
 	}
 
+	// Log segmentation response output
+	log.Info().
+		Str("caller", "SegmentText").
+		Str("model_tier", modelTier).
+		Int("response_len", len(response)).
+		Msg("SegmentText LLM response output")
 	logGeminiResponse("SegmentText", response)
 
-	// Parse JSON response
 	response = strings.TrimSpace(response)
-	// Remove markdown code blocks if present
 	response = strings.TrimPrefix(response, "```json")
 	response = strings.TrimPrefix(response, "```")
 	response = strings.TrimSuffix(response, "```")
 	response = strings.TrimSpace(response)
+
+	if response == "" {
+		return nil, fmt.Errorf("empty response")
+	}
 
 	var result struct {
 		Segments []struct {
@@ -295,25 +434,21 @@ TEXT TO SEGMENT:
 	}
 
 	if err := json.Unmarshal([]byte(response), &result); err != nil {
-		log.Error().Err(err).Str("response", response).Msg("Failed to parse segmentation JSON, using fallback")
-		return c.fallbackSegmentation(text, picturesCount)
+		return nil, fmt.Errorf("parse JSON: %w", err)
+	}
+
+	if len(result.Segments) == 0 {
+		return nil, fmt.Errorf("no segments in response")
 	}
 
 	// Validate and convert to Segment objects
-	segments := make([]*Segment, 0, len(result.Segments))
+	segments := make([]*Segment, 0, len(result.Segments)+1)
 	for _, seg := range result.Segments {
-		// Validate bounds
 		if seg.StartChar < 0 || seg.EndChar > len(text) || seg.StartChar >= seg.EndChar {
-			log.Warn().
-				Int("start", seg.StartChar).
-				Int("end", seg.EndChar).
-				Msg("Invalid segment bounds, using fallback")
-			return c.fallbackSegmentation(text, picturesCount)
+			return nil, fmt.Errorf("invalid segment bounds start=%d end=%d", seg.StartChar, seg.EndChar)
 		}
-
 		segmentText := text[seg.StartChar:seg.EndChar]
 		title := seg.Title
-
 		segments = append(segments, &Segment{
 			ID:        uuid.New(),
 			StartChar: seg.StartChar,
@@ -323,70 +458,60 @@ TEXT TO SEGMENT:
 		})
 	}
 
+	// If the model did not cover the full text (e.g. only segmented the first block and ignored
+	// content after "\n\n---\n\n" such as image/file descriptions), append one segment for the remainder.
+	lastEnd := 0
+	if len(segments) > 0 {
+		lastEnd = segments[len(segments)-1].EndChar
+	}
+	if lastEnd < len(text) {
+		tail := strings.TrimSpace(text[lastEnd:])
+		if len(tail) > 0 {
+			title := "Additional content"
+			segments = append(segments, &Segment{
+				ID:        uuid.New(),
+				StartChar: lastEnd,
+				EndChar:   len(text),
+				Title:     &title,
+				Text:      text[lastEnd:],
+			})
+			log.Info().
+				Str("caller", "SegmentText").
+				Int("trailing_chars", len(text)-lastEnd).
+				Msg("Appended segment for trailing content (e.g. image/file description)")
+		}
+	}
+
 	log.Info().
+		Str("caller", "SegmentText").
+		Str("model_tier", modelTier).
 		Int("segments_created", len(segments)).
 		Msg("Text segmentation complete (Gemini)")
 
 	return segments, nil
 }
 
-// fallbackSegmentation provides simple character-based segmentation
-func (c *Client) fallbackSegmentation(text string, picturesCount int) ([]*Segment, error) {
-	segments := make([]*Segment, 0, picturesCount)
-
-	charsPerSegment := len(text) / picturesCount
-	if charsPerSegment == 0 {
-		charsPerSegment = len(text)
-	}
-
-	for i := 0; i < picturesCount; i++ {
-		start := i * charsPerSegment
-		end := (i + 1) * charsPerSegment
-
-		if i == picturesCount-1 {
-			end = len(text)
-		}
-
-		if start >= len(text) {
-			break
-		}
-
-		if end > len(text) {
-			end = len(text)
-		}
-
-		title := fmt.Sprintf("Part %d", i+1)
-		segmentText := text[start:end]
-
-		segments = append(segments, &Segment{
-			ID:        uuid.New(),
-			StartChar: start,
-			EndChar:   end,
-			Title:     &title,
-			Text:      segmentText,
-		})
-	}
-
-	log.Info().
-		Int("segments_created", len(segments)).
-		Msg("Text segmentation complete (fallback)")
-
-	return segments, nil
+// oneSegmentFallback returns a single segment containing the entire text (used when both segment models fail).
+func (c *Client) oneSegmentFallback(text string) []*Segment {
+	title := "Part 1"
+	return []*Segment{{
+		ID:        uuid.New(),
+		StartChar: 0,
+		EndChar:   len(text),
+		Title:     &title,
+		Text:      text,
+	}}
 }
 
-// GenerateNarration generates narration script for a segment
+// GenerateNarration generates narration script for a segment.
+// Tries Gemini 3 Pro first; if it returns empty, falls back to 2.5 Flash.
 func (c *Client) GenerateNarration(ctx context.Context, text, audioType, inputType string) (string, error) {
 	log.Debug().
 		Str("audio_type", audioType).
 		Str("input_type", inputType).
 		Msg("Generating narration")
 
-	// Use Gemini 3 Pro to generate natural narration
-	if c.llmPro == nil {
-		return c.fallbackNarration(text, audioType, inputType), nil
-	}
-
-	// Build style guidance
+	// Build style guidance and prompt once (shared by Pro and Flash)
 	var styleGuidance string
 	switch inputType {
 	case "educational":
@@ -395,6 +520,8 @@ func (c *Client) GenerateNarration(ctx context.Context, text, audioType, inputTy
 		styleGuidance = "Create professional, measured narration for financial content. Include appropriate disclaimers. Avoid hype or promises."
 	case "fictional":
 		styleGuidance = "Create immersive, dramatic narration suitable for storytelling."
+	default:
+		styleGuidance = "Create clear, engaging narration."
 	}
 
 	var audioStyle string
@@ -403,6 +530,8 @@ func (c *Client) GenerateNarration(ctx context.Context, text, audioType, inputTy
 		audioStyle = "Natural speaking style, as if explaining to a friend."
 	case "podcast":
 		audioStyle = "Professional podcast style with good pacing and emphasis."
+	default:
+		audioStyle = "Natural speaking style."
 	}
 
 	prompt := fmt.Sprintf(`Generate a narration script for the following text.
@@ -417,48 +546,61 @@ Generate a natural narration script that would sound good when read aloud.
 Make it engaging and appropriate for the content type.
 Return ONLY the narration text, no explanations or formatting.`, styleGuidance, audioStyle, text)
 
-	// Call Gemini 3 Pro
-	response, err := llms.GenerateFromSinglePrompt(ctx, c.llmPro, prompt,
-		llms.WithTemperature(0.7),
-		llms.WithMaxTokens(1000),
-	)
-	if err != nil {
-		log.Error().Err(err).Msg("Gemini Pro narration generation failed, using fallback")
-		return c.fallbackNarration(text, audioType, inputType), nil
+	// Try Gemini 3 Pro first
+	if c.llmPro != nil {
+		response, err := llms.GenerateFromSinglePrompt(ctx, c.llmPro, prompt,
+			llms.WithTemperature(0.7),
+			llms.WithMaxTokens(1000),
+		)
+		if err != nil {
+			log.Warn().Err(err).Msg("Gemini Pro narration failed, trying 2.5 Flash")
+		} else {
+			logGeminiResponse("GenerateNarration", response)
+			narration := strings.TrimSpace(response)
+			if narration != "" {
+				log.Info().Msg("Narration generation complete (Gemini Pro)")
+				return narration, nil
+			}
+			log.Warn().Msg("Gemini Pro returned empty narration, trying 2.5 Flash")
+		}
 	}
 
-	logGeminiResponse("GenerateNarration", response)
-
-	narration := strings.TrimSpace(response)
-
-	log.Info().Msg("Narration generation complete (Gemini)")
-
-	return narration, nil
-}
-
-// fallbackNarration provides simple narration fallback
-func (c *Client) fallbackNarration(text, audioType, inputType string) string {
-	var prefix string
-	switch inputType {
-	case "financial":
-		prefix = "[Disclaimer: This is for informational purposes only. Not financial advice.] "
-	case "educational":
-		prefix = "Let's learn about this: "
-	case "fictional":
-		prefix = ""
+	// Fallback: 2.5 Flash
+	if c.llmFlash != nil {
+		response, err := llms.GenerateFromSinglePrompt(ctx, c.llmFlash, prompt,
+			llms.WithTemperature(0.7),
+			llms.WithMaxTokens(1000),
+		)
+		if err != nil {
+			log.Warn().Err(err).Msg("Gemini 2.5 Flash narration failed")
+		} else {
+			logGeminiResponse("GenerateNarration", response)
+			narration := strings.TrimSpace(response)
+			if narration != "" {
+				log.Info().Msg("Narration generation complete (Gemini 2.5 Flash)")
+				return narration, nil
+			}
+		}
 	}
 
-	return prefix + text
+	// No narration from either model: return empty so caller skips TTS
+	log.Info().Msg("Narration not generated, returning empty (TTS will be skipped)")
+	return "", nil
 }
 
-// GenerateAudio returns placeholder audio (audio generation not implemented).
 // GenerateAudio generates audio from narration script using the unified genai SDK.
 // Uses gemini-2.5-pro-preview-tts with response_modalities: ["audio"] and SpeechConfig.
+// If script is empty, skips TTS and returns placeholder (avoids unnecessary API call and zero-length audio).
 func (c *Client) GenerateAudio(ctx context.Context, script, audioType string) (*Audio, error) {
 	log.Debug().
 		Str("audio_type", audioType).
 		Int("script_length", len(script)).
 		Msg("Generating audio")
+
+	if len(script) == 0 {
+		log.Debug().Msg("Script length is zero, skipping TTS and using placeholder")
+		return c.placeholderAudio(script)
+	}
 
 	if c.unifiedClient != nil {
 		audio, err := c.generateAudioUnified(ctx, script, audioType)
@@ -890,4 +1032,56 @@ func (c *Client) placeholderImage(prompt string) (*Image, error) {
 		Str("model", c.modelPro).
 		Msg("Gemini response (image placeholder)")
 	return image, nil
+}
+
+// ExtractContent uses Gemini 3 Pro vision to extract text from images/PDFs
+func (c *Client) ExtractContent(ctx context.Context, data []byte, mimeType, inputType string) (string, error) {
+	if c.genaiClient == nil {
+		return "", fmt.Errorf("genai client not initialized")
+	}
+
+	model := c.genaiClient.GenerativeModel(c.modelPro)
+	prompt := c.buildExtractionPrompt(inputType, mimeType)
+
+	resp, err := model.GenerateContent(ctx, genai.Text(prompt), genai.Blob{MIMEType: mimeType, Data: data})
+	if err != nil {
+		return "", fmt.Errorf("gemini vision failed: %w", err)
+	}
+
+	var result strings.Builder
+	for _, cand := range resp.Candidates {
+		if cand.Content == nil {
+			continue
+		}
+		for _, part := range cand.Content.Parts {
+			if text, ok := part.(genai.Text); ok {
+				result.WriteString(string(text))
+			}
+		}
+	}
+
+	return result.String(), nil
+}
+
+// buildExtractionPrompt asks for a transformative summary (not verbatim extraction) to avoid
+// FinishReasonRecitation / copyright blocks. We want paraphrased content suitable for downstream
+// segmentation and narration, not word-for-word transcription.
+func (c *Client) buildExtractionPrompt(inputType, mimeType string) string {
+	fileType := "document"
+	if strings.HasPrefix(mimeType, "image/") {
+		fileType = "image"
+	}
+
+	base := fmt.Sprintf("Summarize this %s in your own words. Describe the main content, ideas, and structure. Do not quote or transcribe long passages verbatim; paraphrase and condense so the summary is useful for creating an enriched story version.", fileType)
+
+	switch inputType {
+	case "educational":
+		return base + " Focus on the main concepts, facts, and how they are organized. Keep the logical flow clear."
+	case "financial":
+		return base + " Summarize the main points, figures, and conclusions. Note the presence of any disclaimers or risk warnings without quoting them in full."
+	case "fictional":
+		return base + " Summarize the plot, key characters, and story beats in your own words. Capture the tone and main events without copying dialogue or text verbatim."
+	default:
+		return base + " Keep the overall structure and meaning clear in your summary."
+	}
 }

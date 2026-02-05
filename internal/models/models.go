@@ -36,6 +36,8 @@ type Job struct {
 	PicturesCount int        `json:"pictures_count"`
 	AudioType     string     `json:"audio_type"` // free_speech, podcast
 	InputText     string     `json:"input_text"`
+	InputSource   string     `json:"input_source"`   // text, files, mixed
+	ExtractedText *string    `json:"extracted_text,omitempty"`
 	OutputMarkup  *string    `json:"output_markup,omitempty"`
 	WebhookURL    *string    `json:"webhook_url,omitempty"`
 	WebhookSecret *string    `json:"webhook_secret,omitempty"`
@@ -44,6 +46,56 @@ type Job struct {
 	CreatedAt     time.Time  `json:"created_at"`
 	StartedAt     *time.Time `json:"started_at,omitempty"`
 	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+}
+
+// File represents an uploaded file available for job processing
+type File struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Filename  string    `json:"filename"`
+	MimeType  string    `json:"mime_type"`
+	SizeBytes int64     `json:"size_bytes"`
+	S3Bucket  string    `json:"s3_bucket"`
+	S3Key     string    `json:"s3_key"`
+	Status    string    `json:"status"` // pending, ready, failed, expired
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// FileInResponse is File without S3 private fields for API responses (e.g. list files)
+func (f File) ToInResponse() FileInResponse {
+	return FileInResponse{
+		ID:        f.ID,
+		UserID:    f.UserID,
+		Filename:  f.Filename,
+		MimeType:  f.MimeType,
+		SizeBytes: f.SizeBytes,
+		Status:    f.Status,
+		ExpiresAt: f.ExpiresAt,
+		CreatedAt: f.CreatedAt,
+	}
+}
+
+type FileInResponse struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Filename  string    `json:"filename"`
+	MimeType  string    `json:"mime_type"`
+	SizeBytes int64     `json:"size_bytes"`
+	Status    string    `json:"status"` // pending, ready, failed, expired
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// JobFile links jobs to files
+type JobFile struct {
+	ID              uuid.UUID  `json:"id"`
+	JobID           uuid.UUID  `json:"job_id"`
+	FileID          uuid.UUID  `json:"file_id"`
+	ProcessingOrder int        `json:"processing_order"`
+	ExtractedText   *string    `json:"extracted_text,omitempty"`
+	Status          string     `json:"status"` // pending, processing, succeeded, failed
+	CreatedAt       time.Time  `json:"created_at"`
 }
 
 // Segment represents a text segment within a job
@@ -75,6 +127,33 @@ type Asset struct {
 	CreatedAt time.Time      `json:"created_at"`
 }
 
+// AssetInResponse is Asset without S3 private fields for API responses
+func (a Asset) ToInResponse() AssetInResponse {
+	return AssetInResponse{
+		ID:        a.ID,
+		JobID:     a.JobID,
+		SegmentID: a.SegmentID,
+		Kind:      a.Kind,
+		MimeType:  a.MimeType,
+		SizeBytes: a.SizeBytes,
+		Checksum:  a.Checksum,
+		Meta:      a.Meta,
+		CreatedAt: a.CreatedAt,
+	}
+}
+
+type AssetInResponse struct {
+	ID        uuid.UUID      `json:"id"`
+	JobID     uuid.UUID      `json:"job_id"`
+	SegmentID *uuid.UUID     `json:"segment_id,omitempty"`
+	Kind      string         `json:"kind"` // image, audio
+	MimeType  string         `json:"mime_type"`
+	SizeBytes int64          `json:"size_bytes"`
+	Checksum  *string        `json:"checksum,omitempty"`
+	Meta      map[string]any `json:"meta,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
 // WebhookDelivery represents a webhook delivery attempt
 type WebhookDelivery struct {
 	ID            uuid.UUID  `json:"id"`
@@ -89,7 +168,8 @@ type WebhookDelivery struct {
 
 // CreateJobRequest represents a request to create a new job
 type CreateJobRequest struct {
-	Text          string         `json:"text"`
+	Text          string         `json:"text,omitempty"`
+	FileIDs       []uuid.UUID    `json:"file_ids,omitempty"`
 	Type          string         `json:"type"` // educational, financial, fictional
 	PicturesCount int            `json:"pictures_count"`
 	AudioType     string         `json:"audio_type"` // free_speech, podcast
@@ -109,15 +189,34 @@ type CreateJobResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// JobStatusResponse represents detailed job status
-type JobStatusResponse struct {
-	Job      Job              `json:"job"`
-	Segments []*Segment       `json:"segments"`
-	Assets   []*AssetResponse `json:"assets"`
+// UploadFileResponse returned after file upload
+type UploadFileResponse struct {
+	FileID    uuid.UUID `json:"file_id"`
+	Filename  string    `json:"filename"`
+	MimeType  string    `json:"mime_type"`
+	SizeBytes int64     `json:"size_bytes"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// AssetResponse represents asset metadata with download URL
+// JobFileResponse represents file extraction info in job status
+type JobFileResponse struct {
+	FileID        uuid.UUID `json:"file_id"`
+	Filename      string    `json:"filename"`
+	MimeType      string    `json:"mime_type"`
+	ExtractedText *string   `json:"extracted_text,omitempty"`
+	Status        string    `json:"status"`
+}
+
+// JobStatusResponse represents detailed job status
+type JobStatusResponse struct {
+	Job      Job                `json:"job"`
+	Segments []*Segment         `json:"segments"`
+	Assets   []*AssetResponse   `json:"assets"`
+	Files    []*JobFileResponse `json:"files"`
+}
+
+// AssetResponse represents asset metadata with download URL (S3 fields excluded)
 type AssetResponse struct {
-	Asset       Asset  `json:"asset"`
-	DownloadURL string `json:"download_url"`
+	Asset       AssetInResponse `json:"asset"`
+	DownloadURL string          `json:"download_url"`
 }

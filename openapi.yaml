@@ -1,0 +1,586 @@
+openapi: 3.0.3
+info:
+  title: The Great Stories API
+  description: |
+    API-first service that enriches text (and optionally uploaded files) into segmented content
+    with per-segment images and audio narration. Processing is asynchronous; use webhooks or
+    polling to get job results.
+  version: 1.0.0
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+paths:
+  /v1/jobs:
+    post:
+      summary: Create a new enrichment job
+      description: |
+        Submit text and/or file IDs for enrichment. Either `text` or `file_ids` (or both) must be provided.
+        The job is queued and processed asynchronously. Use the returned `job_id` to poll status or
+        configure a webhook for completion notification.
+      operationId: createJob
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateJobRequest'
+      responses:
+        '202':
+          description: Job accepted and queued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateJobResponse'
+        '400':
+          description: Invalid request (e.g. validation, quota exceeded)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized (missing or invalid API key)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      summary: List jobs
+      description: List the authenticated user's jobs with optional pagination.
+      operationId: listJobs
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of jobs to return
+          schema:
+            type: integer
+            default: 20
+        - name: cursor
+          in: query
+          description: Pagination cursor (RFC3339 timestamp of last item)
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: List of jobs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jobs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Job'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/jobs/{id}:
+    get:
+      summary: Get job status and results
+      description: Returns job details, segments, assets (with download URLs), and file extraction info.
+      operationId: getJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Job status and results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobStatusResponse'
+        '400':
+          description: Invalid job ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/files:
+    post:
+      summary: Upload a file
+      description: |
+        Upload a file (PDF or image) for use in job creation. Use the returned `file_id` in
+        `file_ids` when calling POST /v1/jobs. Accepted types include PDF and images (JPEG, PNG, GIF, WebP).
+      operationId: uploadFile
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: The file to upload (form field name must be "file")
+      responses:
+        '201':
+          description: File uploaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadFileResponse'
+        '400':
+          description: Invalid request (e.g. missing file field)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      summary: List files
+      description: List the authenticated user's uploaded files. Optionally filter by status.
+      operationId: listFiles
+      parameters:
+        - name: status
+          in: query
+          description: Filter by file status (e.g. ready)
+          schema:
+            type: string
+            enum: [pending, ready, failed, expired]
+      responses:
+        '200':
+          description: List of files
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/File'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/files/{id}:
+    delete:
+      summary: Delete a file
+      description: Remove an uploaded file. Only the owning user can delete.
+      operationId: deleteFile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: File deleted
+        '400':
+          description: Invalid file ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: File not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/assets/{id}:
+    get:
+      summary: Get asset metadata and download URL
+      description: Returns asset metadata and a URL path to download the binary content.
+      operationId: getAsset
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Asset metadata and download_url
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssetResponse'
+        '400':
+          description: Invalid asset ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Asset not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/assets/{id}/content:
+    get:
+      summary: Download asset content
+      description: Stream the asset binary (image or audio). Requires same Bearer token as other API calls.
+      operationId: getAssetContent
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Asset binary content (Content-Type from asset mime_type)
+          content:
+            image/*:
+              schema:
+                type: string
+                format: binary
+            audio/*:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid asset ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Asset not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: API key in Authorization header as "Bearer &lt;api_key&gt;"
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Error message
+
+    CreateJobRequest:
+      type: object
+      required:
+        - type
+        - pictures_count
+        - audio_type
+      properties:
+        text:
+          type: string
+          maxLength: 50000
+          description: Input text to enrich (optional if file_ids provided)
+        file_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: IDs of previously uploaded files (optional if text provided)
+        type:
+          type: string
+          enum: [educational, financial, fictional]
+          description: Content type affecting style of narration and images
+        pictures_count:
+          type: integer
+          minimum: 1
+          maximum: 20
+          description: Desired number of segments/images (configurable max, default 20)
+        audio_type:
+          type: string
+          enum: [free_speech, podcast]
+          description: Style of generated audio
+        webhook:
+          $ref: '#/components/schemas/WebhookConfig'
+
+    WebhookConfig:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+          description: URL to POST when job completes or fails
+        secret:
+          type: string
+          description: Optional secret for signing webhook payloads
+
+    CreateJobResponse:
+      type: object
+      required: [job_id, status, created_at]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued]
+        created_at:
+          type: string
+          format: date-time
+
+    Job:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, canceled]
+        input_type:
+          type: string
+          enum: [educational, financial, fictional]
+        pictures_count:
+          type: integer
+        audio_type:
+          type: string
+          enum: [free_speech, podcast]
+        input_text:
+          type: string
+        input_source:
+          type: string
+          enum: [text, files, mixed]
+        output_markup:
+          type: string
+          nullable: true
+        webhook_url:
+          type: string
+          nullable: true
+        error_code:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    Segment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        idx:
+          type: integer
+        start_char:
+          type: integer
+        end_char:
+          type: integer
+        title:
+          type: string
+          nullable: true
+        segment_text:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Asset:
+      type: object
+      description: Asset metadata (S3 location excluded from API)
+      properties:
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        segment_id:
+          type: string
+          format: uuid
+          nullable: true
+        kind:
+          type: string
+          enum: [image, audio]
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
+        checksum:
+          type: string
+          nullable: true
+        meta:
+          type: object
+          additionalProperties: true
+        created_at:
+          type: string
+          format: date-time
+
+    AssetResponse:
+      type: object
+      required: [asset, download_url]
+      properties:
+        asset:
+          $ref: '#/components/schemas/Asset'
+        download_url:
+          type: string
+          description: Path to GET for binary content (e.g. /v1/assets/{id}/content)
+
+    JobFileResponse:
+      type: object
+      properties:
+        file_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        mime_type:
+          type: string
+        extracted_text:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [pending, processing, succeeded, failed]
+
+    JobStatusResponse:
+      type: object
+      properties:
+        job:
+          $ref: '#/components/schemas/Job'
+        segments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Segment'
+        assets:
+          type: array
+          items:
+            $ref: '#/components/schemas/AssetResponse'
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobFileResponse'
+
+    File:
+      type: object
+      description: File metadata (S3 location excluded from API)
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
+        status:
+          type: string
+          enum: [pending, ready, failed, expired]
+        expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    UploadFileResponse:
+      type: object
+      required: [file_id, filename, mime_type, size_bytes, expires_at]
+      properties:
+        file_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        mime_type:
+          type: string
+        size_bytes:
+          type: integer
+        expires_at:
+          type: string
+          format: date-time

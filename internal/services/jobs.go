@@ -15,28 +15,59 @@ import (
 
 // JobService handles job-related business logic
 type JobService struct {
-	jobRepo       *database.JobRepository
-	segmentRepo   *database.SegmentRepository
-	assetRepo     *database.AssetRepository
-	apiKeyRepo    *database.APIKeyRepository
-	kafkaProducer *kafka.Producer
+	jobRepo       jobRepository
+	segmentRepo   segmentRepository
+	assetRepo     assetRepository
+	jobFileRepo   jobFileRepository
+	fileRepo      fileRepository
+	apiKeyRepo    apiKeyRepository
+	jobPublisher  JobPublisher
 	config        *config.Config
 }
 
-// NewJobService creates a new JobService
+// NewJobService creates a new JobService from repository and publisher interfaces (for production or testing).
 func NewJobService(
+	jobRepo jobRepository,
+	segmentRepo segmentRepository,
+	assetRepo assetRepository,
+	jobFileRepo jobFileRepository,
+	fileRepo fileRepository,
+	apiKeyRepo apiKeyRepository,
+	jobPublisher JobPublisher,
+	cfg *config.Config,
+) *JobService {
+	return &JobService{
+		jobRepo:      jobRepo,
+		segmentRepo:  segmentRepo,
+		assetRepo:    assetRepo,
+		jobFileRepo:  jobFileRepo,
+		fileRepo:     fileRepo,
+		apiKeyRepo:   apiKeyRepo,
+		jobPublisher: jobPublisher,
+		config:       cfg,
+	}
+}
+
+// NewJobServiceFromDB creates a new JobService from a database connection and optional Kafka producer (for production).
+func NewJobServiceFromDB(
 	db *database.DB,
 	kafkaProducer *kafka.Producer,
 	cfg *config.Config,
 ) *JobService {
-	return &JobService{
-		jobRepo:       database.NewJobRepository(db),
-		segmentRepo:   database.NewSegmentRepository(db),
-		assetRepo:     database.NewAssetRepository(db),
-		apiKeyRepo:    database.NewAPIKeyRepository(db),
-		kafkaProducer: kafkaProducer,
-		config:        cfg,
+	var publisher JobPublisher
+	if kafkaProducer != nil {
+		publisher = kafkaProducer
 	}
+	return NewJobService(
+		database.NewJobRepository(db),
+		database.NewSegmentRepository(db),
+		database.NewAssetRepository(db),
+		database.NewJobFileRepository(db),
+		database.NewFileRepository(db),
+		database.NewAPIKeyRepository(db),
+		publisher,
+		cfg,
+	)
 }
 
 // CreateJob creates a new job
@@ -46,14 +77,45 @@ func (s *JobService) CreateJob(ctx context.Context, req *models.CreateJobRequest
 		return nil, fmt.Errorf("validation error: %w", err)
 	}
 
-	// Get API key for quota checking
-	// In a production system, you'd pass the API key from the auth middleware
-	// For now, we'll skip strict quota checking and just log
-	charsNeeded := int64(len(req.Text))
+	// Determine input source and input text
+	inputSource := "text"
+	inputText := req.Text
+	if len(req.FileIDs) > 0 {
+		if inputText != "" {
+			inputSource = "mixed"
+		} else {
+			inputSource = "files"
+			inputText = "[pending extraction]"
+		}
+	}
+
+	// Validate files exist, belong to user, are ready, and not expired
+	now := time.Now()
+	for _, fileID := range req.FileIDs {
+		file, err := s.fileRepo.GetByIDAndUser(ctx, fileID, userID)
+		if err != nil {
+			return nil, fmt.Errorf("file %s not found or not owned by you", fileID.String())
+		}
+		if file.Status != "ready" {
+			return nil, fmt.Errorf("file %s is not available (status: %s)", fileID.String(), file.Status)
+		}
+		if !file.ExpiresAt.IsZero() && file.ExpiresAt.Before(now) {
+			return nil, fmt.Errorf("file %s has expired", fileID.String())
+		}
+	}
+
+	// Quota: text chars + 1000 per file
+	charsNeeded := int64(len(req.Text)) + int64(len(req.FileIDs))*int64(s.config.CharsPerFile)
+	apiKey, err := s.apiKeyRepo.GetByID(ctx, apiKeyID)
+	if err == nil {
+		if err := s.checkAndUpdateQuota(ctx, apiKey, charsNeeded); err != nil {
+			return nil, err
+		}
+	}
 	log.Info().
 		Str("api_key_id", apiKeyID.String()).
 		Int64("chars_needed", charsNeeded).
-		Msg("Creating job (quota check skipped in demo)")
+		Msg("Creating job")
 
 	// Create job
 	job := &models.Job{
@@ -64,7 +126,8 @@ func (s *JobService) CreateJob(ctx context.Context, req *models.CreateJobRequest
 		InputType:     req.Type,
 		PicturesCount: req.PicturesCount,
 		AudioType:     req.AudioType,
-		InputText:     req.Text,
+		InputText:     inputText,
+		InputSource:   inputSource,
 		CreatedAt:     time.Now(),
 	}
 
@@ -78,11 +141,27 @@ func (s *JobService) CreateJob(ctx context.Context, req *models.CreateJobRequest
 		return nil, fmt.Errorf("failed to create job: %w", err)
 	}
 
-	// Publish to Kafka
-	traceID := uuid.New().String()
-	if err := s.kafkaProducer.PublishJob(ctx, job.ID, traceID); err != nil {
-		log.Error().Err(err).Str("job_id", job.ID.String()).Msg("Failed to publish job to Kafka")
-		// Don't fail the request, job can be retried
+	// Create job_files links
+	for order, fileID := range req.FileIDs {
+		jf := &models.JobFile{
+			ID:              uuid.New(),
+			JobID:           job.ID,
+			FileID:          fileID,
+			ProcessingOrder: order,
+			Status:          "pending",
+			CreatedAt:       time.Now(),
+		}
+		if err := s.jobFileRepo.Create(ctx, jf); err != nil {
+			return nil, fmt.Errorf("failed to link file to job: %w", err)
+		}
+	}
+
+	// Publish to Kafka (no-op when jobPublisher is nil, e.g. in tests)
+	if s.jobPublisher != nil {
+		traceID := uuid.New().String()
+		if err := s.jobPublisher.PublishJob(ctx, job.ID, traceID); err != nil {
+			log.Error().Err(err).Str("job_id", job.ID.String()).Msg("Failed to publish job to Kafka")
+		}
 	}
 
 	log.Info().
@@ -123,10 +202,18 @@ func (s *JobService) GetJob(ctx context.Context, jobID, userID uuid.UUID) (*mode
 		return nil, fmt.Errorf("failed to get assets: %w", err)
 	}
 
+	// Get job files (file extraction info)
+	jobFiles, err := s.jobFileRepo.ListByJob(ctx, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get job files: %w", err)
+	}
+	filesResp := s.buildJobFileResponses(ctx, jobFiles)
+
 	return &models.JobStatusResponse{
 		Job:      *job,
 		Segments: segments,
 		Assets:   s.buildAssetResponses(assets),
+		Files:    filesResp,
 	}, nil
 }
 
@@ -135,7 +222,7 @@ func (s *JobService) buildAssetResponses(assets []*models.Asset) []*models.Asset
 	out := make([]*models.AssetResponse, len(assets))
 	for i, a := range assets {
 		out[i] = &models.AssetResponse{
-			Asset:       *a,
+			Asset:       a.ToInResponse(),
 			DownloadURL: "/v1/assets/" + a.ID.String() + "/content",
 		}
 	}
@@ -164,11 +251,33 @@ func (s *JobService) GetJobByID(ctx context.Context, jobID uuid.UUID) (*models.J
 	if err != nil {
 		return nil, fmt.Errorf("failed to get assets: %w", err)
 	}
+	jobFiles, _ := s.jobFileRepo.ListByJob(ctx, jobID)
+	filesResp := s.buildJobFileResponses(ctx, jobFiles)
 	return &models.JobStatusResponse{
 		Job:      *job,
 		Segments: segments,
 		Assets:   s.buildAssetResponses(assets),
+		Files:    filesResp,
 	}, nil
+}
+
+// buildJobFileResponses converts job files to response with file metadata
+func (s *JobService) buildJobFileResponses(ctx context.Context, jobFiles []*models.JobFile) []*models.JobFileResponse {
+	out := make([]*models.JobFileResponse, len(jobFiles))
+	for i, jf := range jobFiles {
+		resp := &models.JobFileResponse{
+			FileID:        jf.FileID,
+			ExtractedText: jf.ExtractedText,
+			Status:        jf.Status,
+		}
+		file, err := s.fileRepo.GetByID(ctx, jf.FileID)
+		if err == nil {
+			resp.Filename = file.Filename
+			resp.MimeType = file.MimeType
+		}
+		out[i] = resp
+	}
+	return out
 }
 
 // GetAsset returns an asset by ID if the user owns the job it belongs to
@@ -215,8 +324,23 @@ func (s *JobService) ListJobs(ctx context.Context, userID uuid.UUID, limit int, 
 
 // validateCreateJobRequest validates a create job request
 func (s *JobService) validateCreateJobRequest(req *models.CreateJobRequest) error {
-	if req.Text == "" {
-		return fmt.Errorf("text is required")
+	if req.Text == "" && len(req.FileIDs) == 0 {
+		return fmt.Errorf("either text or file_ids is required")
+	}
+
+	if len(req.FileIDs) > s.config.MaxFilesPerJob {
+		return fmt.Errorf("file_ids exceeds maximum of %d files", s.config.MaxFilesPerJob)
+	}
+
+	// Check for duplicate file IDs to prevent UNIQUE constraint violation on job_files table
+	if len(req.FileIDs) > 0 {
+		seen := make(map[uuid.UUID]bool, len(req.FileIDs))
+		for _, fileID := range req.FileIDs {
+			if seen[fileID] {
+				return fmt.Errorf("duplicate file_id: %s", fileID.String())
+			}
+			seen[fileID] = true
+		}
 	}
 
 	if len(req.Text) > s.config.MaxInputLength {

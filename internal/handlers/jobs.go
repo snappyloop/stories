@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -15,14 +16,26 @@ import (
 	"github.com/rs/zerolog/log"
 	"github.com/snappy-loop/stories/internal/auth"
 	"github.com/snappy-loop/stories/internal/database"
+	"github.com/snappy-loop/stories/internal/markup"
 	"github.com/snappy-loop/stories/internal/models"
 	"github.com/snappy-loop/stories/internal/services"
 	"github.com/snappy-loop/stories/internal/storage"
 )
 
+// jobService is the subset of JobService used by job handlers (for testability).
+type jobService interface {
+	CreateJob(ctx context.Context, req *models.CreateJobRequest, userID, apiKeyID uuid.UUID) (*models.CreateJobResponse, error)
+	GetJob(ctx context.Context, jobID, userID uuid.UUID) (*models.JobStatusResponse, error)
+	GetJobByID(ctx context.Context, jobID uuid.UUID) (*models.JobStatusResponse, error)
+	ListJobs(ctx context.Context, userID uuid.UUID, limit int, cursor *time.Time) ([]*models.Job, error)
+	GetAsset(ctx context.Context, assetID, userID uuid.UUID) (*models.Asset, error)
+	GetAssetByJobID(ctx context.Context, assetID, jobID uuid.UUID) (*models.Asset, error)
+}
+
 // Handler contains all HTTP handlers
 type Handler struct {
-	jobService         *services.JobService
+	jobService         jobService
+	fileService        *services.FileService
 	storage            *storage.Client
 	userRepo           *database.UserRepository
 	apiKeyRepo         *database.APIKeyRepository
@@ -33,7 +46,8 @@ type Handler struct {
 
 // NewHandler creates a new handler
 func NewHandler(
-	jobService *services.JobService,
+	jobService jobService,
+	fileService *services.FileService,
 	storage *storage.Client,
 	userRepo *database.UserRepository,
 	apiKeyRepo *database.APIKeyRepository,
@@ -43,6 +57,7 @@ func NewHandler(
 ) *Handler {
 	return &Handler{
 		jobService:         jobService,
+		fileService:        fileService,
 		storage:            storage,
 		userRepo:           userRepo,
 		apiKeyRepo:         apiKeyRepo,
@@ -221,7 +236,7 @@ func (h *Handler) GetAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, models.AssetResponse{
-		Asset:       *asset,
+		Asset:       asset.ToInResponse(),
 		DownloadURL: "/v1/assets/" + assetID.String() + "/content",
 	})
 }
@@ -271,23 +286,8 @@ func (h *Handler) GetAssetContent(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ViewJob handles GET /view/{id} — renders job as HTML with audio at start and image at end of each segment
-func (h *Handler) ViewJob(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	jobID, err := uuid.Parse(vars["id"])
-	if err != nil {
-		http.Error(w, "invalid job id", http.StatusBadRequest)
-		return
-	}
-
-	resp, err := h.jobService.GetJobByID(r.Context(), jobID)
-	if err != nil {
-		log.Error().Err(err).Str("job_id", jobID.String()).Msg("Failed to get job for view")
-		http.Error(w, "job not found", http.StatusNotFound)
-		return
-	}
-
-	// Build map: segment ID -> { audio asset, image asset }
+// viewJobFallbackHTML builds HTML from segments and assets when job has no output_markup (e.g. legacy jobs).
+func viewJobFallbackHTML(resp *models.JobStatusResponse, jobIDStr string) string {
 	type segmentAssets struct {
 		audio *models.AssetResponse
 		image *models.AssetResponse
@@ -313,24 +313,52 @@ func (h *Handler) ViewJob(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-
-	jobIDStr := jobID.String()
-	var b []byte
-	b = append(b, viewHTMLHead...)
+	var b strings.Builder
 	for _, seg := range resp.Segments {
 		sa := bySegment[seg.ID]
-		b = append(b, `<div class="segment">`...)
+		b.WriteString(`<div class="segment">`)
 		if sa != nil && sa.audio != nil {
-			b = append(b, fmt.Sprintf(`<audio controls preload="metadata" src="/view/asset/%s?job_id=%s"></audio>`, sa.audio.Asset.ID.String(), jobIDStr)...)
+			b.WriteString(fmt.Sprintf(`<audio controls preload="metadata" src="/view/asset/%s?job_id=%s"></audio>`, sa.audio.Asset.ID.String(), jobIDStr))
 		}
-		b = append(b, `<p class="segment-text">`...)
-		b = append(b, html.EscapeString(seg.SegmentText)...)
-		b = append(b, `</p>`...)
+		b.WriteString(`<p class="segment-text">`)
+		b.WriteString(html.EscapeString(seg.SegmentText))
+		b.WriteString(`</p>`)
 		if sa != nil && sa.image != nil {
-			b = append(b, fmt.Sprintf(`<img class="segment-image" src="/view/asset/%s?job_id=%s" alt="">`, sa.image.Asset.ID.String(), jobIDStr)...)
+			b.WriteString(fmt.Sprintf(`<img class="segment-image" src="/view/asset/%s?job_id=%s" alt="">`, sa.image.Asset.ID.String(), jobIDStr))
 		}
-		b = append(b, `</div>`...)
+		b.WriteString(`</div>`)
 	}
+	return b.String()
+}
+
+// ViewJob handles GET /view/{id} — renders job as HTML (from output_markup or fallback from segments)
+func (h *Handler) ViewJob(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	jobID, err := uuid.Parse(vars["id"])
+	if err != nil {
+		http.Error(w, "invalid job id", http.StatusBadRequest)
+		return
+	}
+
+	resp, err := h.jobService.GetJobByID(r.Context(), jobID)
+	if err != nil {
+		log.Error().Err(err).Str("job_id", jobID.String()).Msg("Failed to get job for view")
+		http.Error(w, "job not found", http.StatusNotFound)
+		return
+	}
+
+	jobIDStr := jobID.String()
+	var bodyHTML string
+	if resp.Job.OutputMarkup != nil && *resp.Job.OutputMarkup != "" {
+		bodyHTML = markup.ToHTML(*resp.Job.OutputMarkup, jobIDStr)
+	} else {
+		// Fallback: build from segments when no markup (e.g. old jobs)
+		bodyHTML = viewJobFallbackHTML(resp, jobIDStr)
+	}
+
+	var b []byte
+	b = append(b, viewHTMLHead...)
+	b = append(b, bodyHTML...)
 	b = append(b, viewHTMLTail...)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -413,6 +441,10 @@ var viewHTMLHead = []byte(`<!DOCTYPE html>
     .segment audio { display: block; margin-bottom: 0.75rem; width: 100%; }
     .segment-text { margin: 0.75rem 0; line-height: 1.5; white-space: pre-wrap; }
     .segment-image { display: block; max-width: 100%; height: auto; margin-top: 0.75rem; border-radius: 6px; }
+    .segment-title { font-size: 1.1rem; margin: 0.5rem 0 0.25rem; }
+    .source { margin-bottom: 2rem; padding: 1rem; background: #f8f8f8; border-radius: 6px; border-left: 4px solid #ccc; }
+    .source h3 { font-size: 0.95rem; margin: 0 0 0.5rem; color: #555; }
+    .source-content { margin: 0; font-size: 0.9rem; white-space: pre-wrap; word-break: break-word; }
   </style>
 </head>
 <body>
@@ -543,6 +575,7 @@ const generationHTML = `<!DOCTYPE html>
     textarea { min-height: 80px; resize: vertical; }
     button { padding: 0.5rem 1rem; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
     button:hover { background: #555; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
     .result { margin-top: 1rem; padding: 0.75rem; background: #f5f5f5; border-radius: 4px; font-size: 0.9rem; white-space: pre-wrap; word-break: break-all; }
     .error { background: #fee; color: #c00; }
     .poll-status { font-size: 0.85rem; color: #666; margin-bottom: 0.5rem; }
@@ -574,14 +607,16 @@ const generationHTML = `<!DOCTYPE html>
     <div class="api-docs-inner">
       <h4>POST /v1/jobs</h4>
       <p>Create a new enrichment job. Use <code>Authorization: Bearer &lt;api_key&gt;</code>.</p>
-      <p><strong>Request:</strong></p>
+      <p><strong>Request:</strong> Provide <code>text</code> and/or <code>file_ids</code> (upload files first via POST /v1/files).</p>
       <pre>{
-  "text": "string (required, max 50k chars)",
+  "text": "string (optional if file_ids provided)",
+  "file_ids": ["uuid", "..."],
   "type": "educational | financial | fictional",
   "pictures_count": "integer (1–max from config)",
   "audio_type": "free_speech | podcast",
   "webhook": { "url": "string (optional)", "secret": "string (optional)" }
 }</pre>
+      <p><strong>POST /v1/files</strong> — Upload a file (multipart form, field <code>file</code>). Returns <code>file_id</code>. Use these IDs in <code>file_ids</code> when creating a job.</p>
       <p><strong>Response (202):</strong> <code>{ "job_id", "status": "queued", "created_at" }</code></p>
       <h4>GET /v1/jobs/{job_id}</h4>
       <p>Get job status, segments, and assets (with download URLs).</p>
@@ -601,9 +636,13 @@ const generationHTML = `<!DOCTYPE html>
   <section>
     <h2>Send test request</h2>
     <form id="test-request">
-      <label for="text">Text</label>
-      <textarea id="text" name="text" placeholder="Short story or paragraph to enrich..." required maxlength="50000"></textarea>
+      <label for="text">Text (optional if you add files)</label>
+      <textarea id="text" name="text" placeholder="Short story or paragraph to enrich..." maxlength="50000"></textarea>
       <p id="text-remaining" style="font-size:0.85rem;color:#666;margin:-0.5rem 0 0.75rem 0;">50000 characters remaining</p>
+      <label for="files">Files (optional). PDF or images. Uploaded when you send the request.</label>
+      <input type="file" id="files" name="files" multiple accept=".pdf,image/jpeg,image/png,image/gif,image/webp,application/pdf">
+      <p id="files-summary" style="font-size:0.85rem;color:#666;margin:-0.5rem 0 0.75rem 0;">No files selected</p>
+      <p style="font-size:0.8rem;color:#888;margin:-0.25rem 0 0.75rem 0;">Disclaimer: Files containing copyrighted content (e.g. book pages, articles, comics) may fail to process due to content policy.</p>
       <label for="type">Type</label>
       <select id="type" name="type">
         <option value="educational">Educational</option>
@@ -617,7 +656,7 @@ const generationHTML = `<!DOCTYPE html>
         <option value="free_speech">Free speech</option>
         <option value="podcast">Podcast</option>
       </select>
-      <button type="submit">Send test request</button>
+      <button type="submit" id="send-test-btn">Send test request</button>
     </form>
     <div id="test-request-result" class="result" style="display:none;"></div>
   </section>
@@ -630,11 +669,15 @@ const generationHTML = `<!DOCTYPE html>
     </div>
     <p id="get-job-poll-status" class="poll-status" style="display:none;"></p>
     <span id="get-job-view-wrap" style="display:none;"><a id="get-job-view-link" href="#" class="get-job-view-link">View</a></span>   
-	<form id="get-job">
+    <form id="get-job">
       <label for="job-id">Job ID</label>
       <input type="text" id="job-id" name="job_id" placeholder="e.g. 550e8400-e29b-41d4-a716-446655440000" required>
       <button type="submit">Get job</button>
     </form>
+    <p id="get-job-copy-wrap" style="display:none; margin-bottom:0.5rem;">
+      <button type="button" id="get-job-copy-btn">Copy response</button>
+      <span id="get-job-copy-feedback" style="margin-left:0.5rem; font-size:0.9rem; color:#666;"></span>
+    </p>
     <div id="get-job-result" class="result" style="display:none;"></div>
   </section>
 
@@ -653,12 +696,28 @@ const generationHTML = `<!DOCTYPE html>
     textEl.addEventListener('input', updateRemaining);
     textEl.addEventListener('paste', function() { setTimeout(updateRemaining, 0); });
 
+    var filesInput = document.getElementById('files');
+    var filesSummary = document.getElementById('files-summary');
+    function updateFilesSummary() {
+      var n = filesInput.files.length;
+      filesSummary.textContent = n === 0 ? 'No files selected' : n + ' file(s) selected';
+    }
+    filesInput.addEventListener('change', updateFilesSummary);
+
     document.getElementById('test-request').addEventListener('submit', async function(e) {
       e.preventDefault();
       const resultEl = document.getElementById('test-request-result');
+      const sendBtn = document.getElementById('send-test-btn');
       resultEl.style.display = 'block';
       resultEl.classList.remove('error');
-      const text = document.getElementById('text').value;
+      const text = document.getElementById('text').value.trim();
+      const fileList = filesInput.files;
+      const hasFiles = fileList && fileList.length > 0;
+      if (!text && !hasFiles) {
+        resultEl.textContent = 'Please enter text and/or select at least one file.';
+        resultEl.classList.add('error');
+        return;
+      }
       if (text.length > MAX_TEXT_LENGTH) {
         resultEl.textContent = 'Text is too long. Maximum ' + MAX_TEXT_LENGTH + ' characters.';
         resultEl.classList.add('error');
@@ -676,12 +735,50 @@ const generationHTML = `<!DOCTYPE html>
         resultEl.classList.add('error');
         return;
       }
-      const payload = {
-        text: text,
+
+      var fileIds = [];
+      if (hasFiles) {
+        sendBtn.disabled = true;
+        sendBtn.textContent = 'Uploading 0/' + fileList.length + '...';
+        resultEl.textContent = 'Uploading files...';
+        try {
+          for (var i = 0; i < fileList.length; i++) {
+            sendBtn.textContent = 'Uploading ' + (i + 1) + '/' + fileList.length + '...';
+            var fd = new FormData();
+            fd.append('file', fileList[i]);
+            var uploadRes = await fetch('/v1/files', {
+              method: 'POST',
+              headers: { 'Authorization': 'Bearer ' + apiKey },
+              body: fd
+            });
+            var uploadData = await uploadRes.json();
+            if (!uploadRes.ok) {
+              resultEl.textContent = 'Upload failed: ' + (uploadData.error || uploadRes.statusText);
+              resultEl.classList.add('error');
+              sendBtn.disabled = false;
+              sendBtn.textContent = 'Send test request';
+              return;
+            }
+            fileIds.push(uploadData.file_id);
+          }
+        } catch (err) {
+          resultEl.textContent = 'Upload error: ' + err.message;
+          resultEl.classList.add('error');
+          sendBtn.disabled = false;
+          sendBtn.textContent = 'Send test request';
+          return;
+        }
+        sendBtn.textContent = 'Creating job...';
+      }
+
+      var payload = {
         type: document.getElementById('type').value,
         pictures_count: picturesCount,
         audio_type: document.getElementById('audio_type').value
       };
+      if (text) payload.text = text;
+      if (fileIds.length > 0) payload.file_ids = fileIds;
+
       try {
         const res = await fetch('/v1/jobs', {
           method: 'POST',
@@ -695,6 +792,8 @@ const generationHTML = `<!DOCTYPE html>
         if (!res.ok) {
           resultEl.textContent = 'Error: ' + (data.error || res.statusText);
           resultEl.classList.add('error');
+          sendBtn.disabled = false;
+          sendBtn.textContent = 'Send test request';
           return;
         }
         resultEl.textContent = 'Job created.\njob_id: ' + data.job_id + '\nstatus: ' + data.status;
@@ -703,6 +802,8 @@ const generationHTML = `<!DOCTYPE html>
         resultEl.textContent = 'Error: ' + err.message;
         resultEl.classList.add('error');
       }
+      sendBtn.disabled = false;
+      sendBtn.textContent = 'Send test request';
     });
 
     var getJobPollTimer = null;
@@ -744,11 +845,13 @@ const generationHTML = `<!DOCTYPE html>
     document.getElementById('get-job').addEventListener('submit', async function(e) {
       e.preventDefault();
       const resultEl = document.getElementById('get-job-result');
+      const copyWrap = document.getElementById('get-job-copy-wrap');
       const pollStatusEl = document.getElementById('get-job-poll-status');
       const loadingEl = document.getElementById('get-job-loading');
       const viewWrap = document.getElementById('get-job-view-wrap');
       const viewLink = document.getElementById('get-job-view-link');
       resultEl.style.display = 'block';
+      copyWrap.style.display = 'block';
       resultEl.classList.remove('error');
       const apiKey = document.getElementById('api-key').value.trim();
       const jobId = document.getElementById('job-id').value.trim();
@@ -783,6 +886,24 @@ const generationHTML = `<!DOCTYPE html>
         resultEl.classList.add('error');
         loadingEl.classList.remove('visible');
       }
+    });
+
+    document.getElementById('get-job-copy-btn').addEventListener('click', function() {
+      const resultEl = document.getElementById('get-job-result');
+      const feedback = document.getElementById('get-job-copy-feedback');
+      var text = resultEl.textContent || '';
+      if (!text) {
+        feedback.textContent = 'Nothing to copy.';
+        setTimeout(function() { feedback.textContent = ''; }, 2000);
+        return;
+      }
+      navigator.clipboard.writeText(text).then(function() {
+        feedback.textContent = 'Copied!';
+        setTimeout(function() { feedback.textContent = ''; }, 2000);
+      }).catch(function() {
+        feedback.textContent = 'Copy failed.';
+        setTimeout(function() { feedback.textContent = ''; }, 2000);
+      });
     });
   </script>
 </body>

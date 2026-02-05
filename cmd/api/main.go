@@ -52,7 +52,7 @@ func main() {
 	kafkaProducer := kafka.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopicJobs)
 	defer kafkaProducer.Close()
 
-	jobService := services.NewJobService(db, kafkaProducer, cfg)
+	jobService := services.NewJobServiceFromDB(db, kafkaProducer, cfg)
 	storageClient, err := storage.NewClient(
 		cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket,
 		cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseSSL, cfg.S3PublicURL,
@@ -62,9 +62,12 @@ func main() {
 	}
 	userRepo := database.NewUserRepository(db)
 	apiKeyRepo := database.NewAPIKeyRepository(db)
+	fileRepo := database.NewFileRepository(db)
+	fileService := services.NewFileService(fileRepo, storageClient, cfg.S3Bucket, cfg)
 
 	h := handlers.NewHandler(
 		jobService,
+		fileService,
 		storageClient,
 		userRepo,
 		apiKeyRepo,
@@ -87,6 +90,9 @@ func main() {
 	api.HandleFunc("/jobs", h.CreateJob).Methods("POST")
 	api.HandleFunc("/jobs/{id}", h.GetJob).Methods("GET")
 	api.HandleFunc("/jobs", h.ListJobs).Methods("GET")
+	api.HandleFunc("/files", h.UploadFile).Methods("POST")
+	api.HandleFunc("/files", h.ListFiles).Methods("GET")
+	api.HandleFunc("/files/{id}", h.DeleteFile).Methods("DELETE")
 	api.HandleFunc("/assets/{id}", h.GetAsset).Methods("GET")
 	api.HandleFunc("/assets/{id}/content", h.GetAssetContent).Methods("GET")
 

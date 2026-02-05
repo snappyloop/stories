@@ -38,13 +38,21 @@ type Config struct {
 	GeminiModelPro    string
 	GeminiModelFlash  string
 	GeminiModelImage  string // image generation, e.g. gemini-3-pro-image-preview
-	GeminiModelTTS    string // TTS model, e.g. gemini-2.5-pro-preview-tts
-	GeminiTTSVoice    string // TTS voice name, e.g. Zephyr, Puck, Aoede
+	GeminiModelTTS             string // TTS model, e.g. gemini-2.5-pro-preview-tts
+	GeminiTTSVoice             string // TTS voice name, e.g. Zephyr, Puck, Aoede
+	GeminiModelSegmentPrimary   string // primary model for segmentation, e.g. gemini-3.0-flash
+	GeminiModelSegmentFallback  string // fallback model for segmentation, e.g. gemini-2.5-flash-lite
 
 	// Processing
 	MaxInputLength        int
 	MaxPicturesCount      int
 	MaxConcurrentSegments int
+
+	// File upload (multi-modal input)
+	MaxFileSize       int64 // max size per file in bytes (default 10MB)
+	MaxFilesPerJob    int   // max files per job (default 10)
+	FileExpirationHrs int   // hours until unused file expires (default 24)
+	CharsPerFile      int   // quota cost in chars per file (default 1000)
 
 	// Quota
 	DefaultQuotaChars  int64
@@ -90,12 +98,19 @@ func Load() *Config {
 		GeminiModelPro:    getEnv("GEMINI_MODEL_PRO", "gemini-3-pro-preview"),
 		GeminiModelFlash:  getEnv("GEMINI_MODEL_FLASH", "gemini-2.5-flash-lite"),
 		GeminiModelImage:  getEnv("GEMINI_MODEL_IMAGE", "gemini-3-pro-image-preview"),
-		GeminiModelTTS:    getEnv("GEMINI_MODEL_TTS", "gemini-2.5-pro-preview-tts"),
-		GeminiTTSVoice:    getEnv("GEMINI_TTS_VOICE", "Zephyr"),
+		GeminiModelTTS:            getEnv("GEMINI_MODEL_TTS", "gemini-2.5-pro-preview-tts"),
+		GeminiTTSVoice:            getEnv("GEMINI_TTS_VOICE", "Zephyr"),
+		GeminiModelSegmentPrimary:  getEnv("GEMINI_MODEL_SEGMENT_PRIMARY", "gemini-3.0-flash"),
+		GeminiModelSegmentFallback: getEnv("GEMINI_MODEL_SEGMENT_FALLBACK", "gemini-2.5-flash-lite"),
 
 		MaxInputLength:        getEnvInt("MAX_INPUT_LENGTH", 50000),
 		MaxPicturesCount:      getEnvInt("MAX_PICTURES_COUNT", 20),
 		MaxConcurrentSegments: clampMin(getEnvInt("MAX_CONCURRENT_SEGMENTS", 5), 1),
+
+		MaxFileSize:       getEnvInt64("MAX_FILE_SIZE", 10*1024*1024), // 10MB
+		MaxFilesPerJob:    getEnvInt("MAX_FILES_PER_JOB", 10),
+		FileExpirationHrs: getEnvInt("FILE_EXPIRATION_HOURS", 24),
+		CharsPerFile:      getEnvInt("CHARS_PER_FILE", 1000),
 
 		DefaultQuotaChars:  int64(getEnvInt("DEFAULT_QUOTA_CHARS", 100000)),
 		DefaultQuotaPeriod: getEnv("DEFAULT_QUOTA_PERIOD", "monthly"),
@@ -121,6 +136,15 @@ func getEnv(key, defaultValue string) string {
 func getEnvInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intVal, err := strconv.Atoi(value); err == nil {
+			return intVal
+		}
+	}
+	return defaultValue
+}
+
+func getEnvInt64(key string, defaultValue int64) int64 {
+	if value := os.Getenv(key); value != "" {
+		if intVal, err := strconv.ParseInt(value, 10, 64); err == nil {
 			return intVal
 		}
 	}
