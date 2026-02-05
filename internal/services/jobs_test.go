@@ -11,7 +11,28 @@ import (
 	"github.com/snappy-loop/stories/internal/config"
 	"github.com/snappy-loop/stories/internal/database"
 	"github.com/snappy-loop/stories/internal/models"
+	"github.com/snappy-loop/stories/migrations"
 )
+
+// setupTestDB connects to the database from DATABASE_URL, runs migrations, and
+// returns the DB. Skips the test if DATABASE_URL is not set. Use for integration
+// tests that need the full schema (e.g. in CI).
+func setupTestDB(t *testing.T) *database.DB {
+	t.Helper()
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		t.Skip("DATABASE_URL not set, skipping integration test")
+	}
+	db, err := database.Connect(dbURL)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := migrations.Run(db.SQLDB()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return db
+}
 
 // TestCreateJob_ValidationErrors tests that CreateJob returns validation errors
 // for invalid requests without hitting the database (validation runs first).
@@ -26,17 +47,7 @@ func TestCreateJob_ValidationErrors(t *testing.T) {
 		DefaultQuotaPeriod: "monthly",
 	}
 
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
-	db, err := database.Connect(dbURL)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer db.Close()
-
+	db := setupTestDB(t)
 	svc := NewJobService(db, nil, cfg)
 	ctx := context.Background()
 	userID := uuid.New()
@@ -115,17 +126,7 @@ func TestCreateJob_ValidationErrors(t *testing.T) {
 // TestCreateJob_Success runs a full create-job flow when DB is available and
 // user/api_key are created in the test.
 func TestCreateJob_Success(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
-	db, err := database.Connect(dbURL)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer db.Close()
-
+	db := setupTestDB(t)
 	cfg := config.Load()
 	cfg.MaxPicturesCount = 20
 	cfg.MaxInputLength = 50000
@@ -182,17 +183,7 @@ func TestCreateJob_Success(t *testing.T) {
 
 // TestGetJob_AccessDenied ensures a user cannot get another user's job.
 func TestGetJob_AccessDenied(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
-	db, err := database.Connect(dbURL)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer db.Close()
-
+	db := setupTestDB(t)
 	cfg := config.Load()
 	userRepo := database.NewUserRepository(db)
 	apiKeyRepo := database.NewAPIKeyRepository(db)
@@ -239,17 +230,7 @@ func TestGetJob_AccessDenied(t *testing.T) {
 
 // TestListJobs_LimitClamping ensures limit is clamped to 1-100.
 func TestListJobs_LimitClamping(t *testing.T) {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		t.Skip("DATABASE_URL not set, skipping integration test")
-	}
-
-	db, err := database.Connect(dbURL)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer db.Close()
-
+	db := setupTestDB(t)
 	svc := NewJobService(db, nil, config.Load())
 	ctx := context.Background()
 	userID := uuid.New()
