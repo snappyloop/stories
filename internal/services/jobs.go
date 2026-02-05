@@ -15,32 +15,59 @@ import (
 
 // JobService handles job-related business logic
 type JobService struct {
-	jobRepo       *database.JobRepository
-	segmentRepo   *database.SegmentRepository
-	assetRepo     *database.AssetRepository
-	jobFileRepo   *database.JobFileRepository
-	fileRepo      *database.FileRepository
-	apiKeyRepo    *database.APIKeyRepository
-	kafkaProducer *kafka.Producer
+	jobRepo       jobRepository
+	segmentRepo   segmentRepository
+	assetRepo     assetRepository
+	jobFileRepo   jobFileRepository
+	fileRepo      fileRepository
+	apiKeyRepo    apiKeyRepository
+	jobPublisher  JobPublisher
 	config        *config.Config
 }
 
-// NewJobService creates a new JobService
+// NewJobService creates a new JobService from repository and publisher interfaces (for production or testing).
 func NewJobService(
+	jobRepo jobRepository,
+	segmentRepo segmentRepository,
+	assetRepo assetRepository,
+	jobFileRepo jobFileRepository,
+	fileRepo fileRepository,
+	apiKeyRepo apiKeyRepository,
+	jobPublisher JobPublisher,
+	cfg *config.Config,
+) *JobService {
+	return &JobService{
+		jobRepo:      jobRepo,
+		segmentRepo:  segmentRepo,
+		assetRepo:    assetRepo,
+		jobFileRepo:  jobFileRepo,
+		fileRepo:     fileRepo,
+		apiKeyRepo:   apiKeyRepo,
+		jobPublisher: jobPublisher,
+		config:       cfg,
+	}
+}
+
+// NewJobServiceFromDB creates a new JobService from a database connection and optional Kafka producer (for production).
+func NewJobServiceFromDB(
 	db *database.DB,
 	kafkaProducer *kafka.Producer,
 	cfg *config.Config,
 ) *JobService {
-	return &JobService{
-		jobRepo:       database.NewJobRepository(db),
-		segmentRepo:   database.NewSegmentRepository(db),
-		assetRepo:     database.NewAssetRepository(db),
-		jobFileRepo:   database.NewJobFileRepository(db),
-		fileRepo:      database.NewFileRepository(db),
-		apiKeyRepo:    database.NewAPIKeyRepository(db),
-		kafkaProducer: kafkaProducer,
-		config:        cfg,
+	var publisher JobPublisher
+	if kafkaProducer != nil {
+		publisher = kafkaProducer
 	}
+	return NewJobService(
+		database.NewJobRepository(db),
+		database.NewSegmentRepository(db),
+		database.NewAssetRepository(db),
+		database.NewJobFileRepository(db),
+		database.NewFileRepository(db),
+		database.NewAPIKeyRepository(db),
+		publisher,
+		cfg,
+	)
 }
 
 // CreateJob creates a new job
@@ -125,10 +152,12 @@ func (s *JobService) CreateJob(ctx context.Context, req *models.CreateJobRequest
 		}
 	}
 
-	// Publish to Kafka
-	traceID := uuid.New().String()
-	if err := s.kafkaProducer.PublishJob(ctx, job.ID, traceID); err != nil {
-		log.Error().Err(err).Str("job_id", job.ID.String()).Msg("Failed to publish job to Kafka")
+	// Publish to Kafka (no-op when jobPublisher is nil, e.g. in tests)
+	if s.jobPublisher != nil {
+		traceID := uuid.New().String()
+		if err := s.jobPublisher.PublishJob(ctx, job.ID, traceID); err != nil {
+			log.Error().Err(err).Str("job_id", job.ID.String()).Msg("Failed to publish job to Kafka")
+		}
 	}
 
 	log.Info().

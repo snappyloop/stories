@@ -52,7 +52,7 @@ func main() {
 	kafkaProducer := kafka.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopicJobs)
 	defer kafkaProducer.Close()
 
-	jobService := services.NewJobService(db, kafkaProducer, cfg)
+	jobService := services.NewJobServiceFromDB(db, kafkaProducer, cfg)
 	storageClient, err := storage.NewClient(
 		cfg.S3Endpoint, cfg.S3Region, cfg.S3Bucket,
 		cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseSSL, cfg.S3PublicURL,
