@@ -339,7 +339,7 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 	}
 	ext := audioExtension(mimeType)
 	audioKey := fmt.Sprintf("jobs/%s/segments/%d/audio.%s", job.ID, idx, ext)
-	if err := p.storageClient.Upload(ctx, audioKey, audio.Data, mimeType); err != nil {
+	if err := p.storageClient.Upload(ctx, audioKey, audio.Data, mimeType, audio.Size); err != nil {
 		p.segmentRepo.UpdateStatus(ctx, job.ID, idx, "failed")
 		return fmt.Errorf("audio upload failed: %w", err)
 	}
@@ -395,7 +395,7 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 		Msg("Image from Gemini, uploading to S3")
 
 	// Upload image to S3
-	if err := p.storageClient.Upload(ctx, imageKey, image.Data, imgMimeType); err != nil {
+	if err := p.storageClient.Upload(ctx, imageKey, image.Data, imgMimeType, image.Size); err != nil {
 		p.segmentRepo.UpdateStatus(ctx, job.ID, idx, "failed")
 		return fmt.Errorf("image upload failed: %w", err)
 	}

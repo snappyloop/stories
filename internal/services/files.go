@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -48,18 +49,6 @@ func NewFileService(
 	}
 }
 
-// countReader wraps an io.Reader and counts bytes read (for enforcing and recording actual size).
-type countReader struct {
-	r io.Reader
-	n int64
-}
-
-func (c *countReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	c.n += int64(n)
-	return n, err
-}
-
 // UploadFile uploads a file to S3 and creates a file record.
 // Size is enforced by limiting the stream to MaxFileSize; the actual bytes read are recorded (client-reported size is ignored).
 func (s *FileService) UploadFile(ctx context.Context, userID uuid.UUID, filename, mimeType string, data io.Reader) (*models.UploadFileResponse, error) {
@@ -73,22 +62,25 @@ func (s *FileService) UploadFile(ctx context.Context, userID uuid.UUID, filename
 		filename = "upload"
 	}
 
-	// Enforce max size by reading at most MaxFileSize+1 bytes; we reject if more would be available
+	// Enforce max size by reading at most MaxFileSize+1 bytes; we reject if more would be available.
+	// Buffer so we know Content-Length (required by R2 and other S3-compatible backends).
 	limited := io.LimitReader(data, s.config.MaxFileSize+1)
-	counted := &countReader{r: limited}
+	buf := new(bytes.Buffer)
+	n, err := io.Copy(buf, limited)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read upload: %w", err)
+	}
+	actualSize := n
+	if actualSize > s.config.MaxFileSize {
+		return nil, fmt.Errorf("file size exceeds maximum of %d bytes", s.config.MaxFileSize)
+	}
 
 	fileID := uuid.New()
 	expiresAt := time.Now().Add(time.Duration(s.config.FileExpirationHrs) * time.Hour)
 	s3Key := fmt.Sprintf("files/%s/%s", userID.String(), fileID.String()+getExtension(filename, mimeType))
 
-	if err := s.storage.Upload(ctx, s3Key, counted, mimeType); err != nil {
+	if err := s.storage.Upload(ctx, s3Key, bytes.NewReader(buf.Bytes()), mimeType, actualSize); err != nil {
 		return nil, fmt.Errorf("failed to upload to storage: %w", err)
-	}
-
-	actualSize := counted.n
-	if actualSize > s.config.MaxFileSize {
-		_ = s.storage.Delete(ctx, s3Key)
-		return nil, fmt.Errorf("file size exceeds maximum of %d bytes", s.config.MaxFileSize)
 	}
 
 	file := &models.File{

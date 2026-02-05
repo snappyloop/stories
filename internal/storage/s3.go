@@ -58,14 +58,16 @@ func NewClient(endpoint, region, bucket, accessKey, secretKey string, useSSL boo
 	}, nil
 }
 
-// Upload uploads data to S3
-func (c *Client) Upload(ctx context.Context, key string, data io.Reader, contentType string) error {
-	_, err := c.s3Client.PutObject(ctx, &s3.PutObjectInput{
+// Upload uploads data to S3. contentLength must be > 0; S3-compatible backends (e.g. R2) require the Content-Length header.
+func (c *Client) Upload(ctx context.Context, key string, data io.Reader, contentType string, contentLength int64) error {
+	input := &s3.PutObjectInput{
 		Bucket:      aws.String(c.bucket),
 		Key:         aws.String(key),
 		Body:        data,
 		ContentType: aws.String(contentType),
-	})
+		ContentLength: aws.Int64(contentLength),
+	}
+	_, err := c.s3Client.PutObject(ctx, input)
 
 	if err != nil {
 		return fmt.Errorf("failed to upload to S3: %w", err)
