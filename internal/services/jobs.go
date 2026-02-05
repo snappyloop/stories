@@ -63,7 +63,7 @@ func (s *JobService) CreateJob(ctx context.Context, req *models.CreateJobRequest
 	}
 
 	// Validate files exist and belong to user
-	for i, fileID := range req.FileIDs {
+	for _, fileID := range req.FileIDs {
 		file, err := s.fileRepo.GetByIDAndUser(ctx, fileID, userID)
 		if err != nil {
 			return nil, fmt.Errorf("file %s not found or not owned by you", fileID.String())
@@ -71,7 +71,6 @@ func (s *JobService) CreateJob(ctx context.Context, req *models.CreateJobRequest
 		if file.Status != "ready" {
 			return nil, fmt.Errorf("file %s is not available (status: %s)", fileID.String(), file.Status)
 		}
-		_ = i
 	}
 
 	// Quota: text chars + 1000 per file
@@ -235,7 +234,7 @@ func (s *JobService) buildJobFileResponses(ctx context.Context, jobFiles []*mode
 	for i, jf := range jobFiles {
 		resp := &models.JobFileResponse{
 			FileID:        jf.FileID,
-			ExtractedText:  jf.ExtractedText,
+			ExtractedText: jf.ExtractedText,
 			Status:        jf.Status,
 		}
 		file, err := s.fileRepo.GetByID(ctx, jf.FileID)
@@ -298,6 +297,17 @@ func (s *JobService) validateCreateJobRequest(req *models.CreateJobRequest) erro
 
 	if len(req.FileIDs) > s.config.MaxFilesPerJob {
 		return fmt.Errorf("file_ids exceeds maximum of %d files", s.config.MaxFilesPerJob)
+	}
+
+	// Check for duplicate file IDs to prevent UNIQUE constraint violation on job_files table
+	if len(req.FileIDs) > 0 {
+		seen := make(map[uuid.UUID]bool, len(req.FileIDs))
+		for _, fileID := range req.FileIDs {
+			if seen[fileID] {
+				return fmt.Errorf("duplicate file_id: %s", fileID.String())
+			}
+			seen[fileID] = true
+		}
 	}
 
 	if len(req.Text) > s.config.MaxInputLength {

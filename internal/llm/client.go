@@ -74,20 +74,20 @@ func logGeminiResponse(caller, raw string) {
 
 // Client wraps Gemini API client
 type Client struct {
-	apiKey                string
-	modelFlash            string
-	modelPro              string
-	modelImage            string // image generation, e.g. gemini-3-pro-image-preview
-	modelTTS              string // TTS model, e.g. gemini-2.5-pro-preview-tts
-	ttsVoice              string // TTS voice name, e.g. Zephyr, Puck, Aoede
-	modelSegmentPrimary   string // e.g. gemini-3.0-flash
-	modelSegmentFallback  string // e.g. gemini-2.5-flash-lite
-	llmFlash              llms.Model
-	llmPro                llms.Model
-	llmSegmentPrimary     llms.Model   // primary for segmentation
-	llmSegmentFallback    llms.Model   // fallback for segmentation
-	genaiClient           *genai.Client        // for image modality and segment schema
-	unifiedClient         *unifiedgenai.Client // unified genai SDK for TTS
+	apiKey               string
+	modelFlash           string
+	modelPro             string
+	modelImage           string // image generation, e.g. gemini-3-pro-image-preview
+	modelTTS             string // TTS model, e.g. gemini-2.5-pro-preview-tts
+	ttsVoice             string // TTS voice name, e.g. Zephyr, Puck, Aoede
+	modelSegmentPrimary  string // e.g. gemini-3.0-flash
+	modelSegmentFallback string // e.g. gemini-2.5-flash-lite
+	llmFlash             llms.Model
+	llmPro               llms.Model
+	llmSegmentPrimary    llms.Model           // primary for segmentation
+	llmSegmentFallback   llms.Model           // fallback for segmentation
+	genaiClient          *genai.Client        // for image modality and segment schema
+	unifiedClient        *unifiedgenai.Client // unified genai SDK for TTS
 }
 
 // NewClient creates a new LLM client.
@@ -280,9 +280,9 @@ func (c *Client) SegmentText(ctx context.Context, text string, picturesCount int
 
 	// Try primary (3.0 flash), then fallback (2.5 flash)
 	for _, tier := range []struct {
-		name       string
-		modelName  string
-		langModel  llms.Model
+		name      string
+		modelName string
+		langModel llms.Model
 	}{
 		{"primary", c.modelSegmentPrimary, c.llmSegmentPrimary},
 		{"fallback", c.modelSegmentFallback, c.llmSegmentFallback},
@@ -503,61 +503,6 @@ func (c *Client) oneSegmentFallback(text string) []*Segment {
 	}}
 }
 
-// fallbackSegmentation provides simple rune-based segmentation so we never cut
-// in the middle of a UTF-8 rune (avoids invalid byte sequence errors in PostgreSQL).
-func (c *Client) fallbackSegmentation(text string, picturesCount int) ([]*Segment, error) {
-	segments := make([]*Segment, 0, picturesCount)
-
-	runes := []rune(text)
-	n := len(runes)
-	if n == 0 {
-		return segments, nil
-	}
-
-	runesPerSegment := n / picturesCount
-	if runesPerSegment == 0 {
-		runesPerSegment = 1
-	}
-
-	for i := 0; i < picturesCount; i++ {
-		startRune := i * runesPerSegment
-		endRune := (i + 1) * runesPerSegment
-
-		if i == picturesCount-1 {
-			endRune = n
-		}
-
-		if startRune >= n {
-			break
-		}
-
-		if endRune > n {
-			endRune = n
-		}
-
-		title := fmt.Sprintf("Part %d", i+1)
-		segmentText := string(runes[startRune:endRune])
-
-		// start_char/end_char are byte offsets for compatibility with Gemini response format
-		startChar := len(string(runes[:startRune]))
-		endChar := len(string(runes[:endRune]))
-
-		segments = append(segments, &Segment{
-			ID:        uuid.New(),
-			StartChar: startChar,
-			EndChar:   endChar,
-			Title:     &title,
-			Text:      segmentText,
-		})
-	}
-
-	log.Info().
-		Int("segments_created", len(segments)).
-		Msg("Text segmentation complete (fallback)")
-
-	return segments, nil
-}
-
 // GenerateNarration generates narration script for a segment.
 // Tries Gemini 3 Pro first; if it returns empty, falls back to 2.5 Flash.
 func (c *Client) GenerateNarration(ctx context.Context, text, audioType, inputType string) (string, error) {
@@ -641,21 +586,6 @@ Return ONLY the narration text, no explanations or formatting.`, styleGuidance, 
 	// No narration from either model: return empty so caller skips TTS
 	log.Info().Msg("Narration not generated, returning empty (TTS will be skipped)")
 	return "", nil
-}
-
-// fallbackNarration provides simple narration fallback
-func (c *Client) fallbackNarration(text, audioType, inputType string) string {
-	var prefix string
-	switch inputType {
-	case "financial":
-		prefix = "[Disclaimer: This is for informational purposes only. Not financial advice.] "
-	case "educational":
-		prefix = "Let's learn about this: "
-	case "fictional":
-		prefix = ""
-	}
-
-	return prefix + text
 }
 
 // GenerateAudio generates audio from narration script using the unified genai SDK.
