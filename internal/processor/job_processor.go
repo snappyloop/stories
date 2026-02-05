@@ -162,34 +162,45 @@ func (p *JobProcessor) ProcessJob(ctx context.Context, jobID uuid.UUID) error {
 
 // processJobPipeline executes the full processing pipeline
 func (p *JobProcessor) processJobPipeline(ctx context.Context, job *models.Job) error {
-	// Step 0: Resolve input to text (e.g. extract from files via vision)
+	// Step 0: Resolve input to text. For files/mixed, extract from files via vision and combine with optional input text.
+	// The result (including all extracted file text) is segmented and used for narration, audio, and images.
 	textToSegment := job.InputText
-	if p.inputRegistry != nil {
+	if job.InputSource == "files" || job.InputSource == "mixed" {
+		if p.inputRegistry == nil {
+			return fmt.Errorf("input processor required for input_source=%s", job.InputSource)
+		}
+		processor := p.inputRegistry.GetProcessor(job.InputSource)
+		if processor == nil {
+			return fmt.Errorf("no input processor for input_source=%s (extracted text would not be used)", job.InputSource)
+		}
+		jobFiles, err := p.jobFileRepo.ListByJob(ctx, job.ID)
+		if err != nil {
+			return fmt.Errorf("failed to list job files: %w", err)
+		}
+		combined, err := processor.Process(ctx, job, jobFiles)
+		if err != nil {
+			return fmt.Errorf("input processing failed: %w", err)
+		}
+		textToSegment = combined
+		if strings.TrimSpace(textToSegment) == "" || textToSegment == "[pending extraction]" {
+			return fmt.Errorf("no text to segment for input_source=%s (extraction returned empty or pending)", job.InputSource)
+		}
+		if err := p.jobRepo.UpdateExtractedText(ctx, job.ID, &combined); err != nil {
+			log.Warn().Err(err).Msg("Failed to update job extracted_text")
+		}
+		job.ExtractedText = &combined
+	} else if p.inputRegistry != nil {
 		processor := p.inputRegistry.GetProcessor(job.InputSource)
 		if processor != nil {
-			var jobFiles []*models.JobFile
-			if job.InputSource == "files" || job.InputSource == "mixed" {
-				var err error
-				jobFiles, err = p.jobFileRepo.ListByJob(ctx, job.ID)
-				if err != nil {
-					return fmt.Errorf("failed to list job files: %w", err)
-				}
-			}
-			combined, err := processor.Process(ctx, job, jobFiles)
+			combined, err := processor.Process(ctx, job, nil)
 			if err != nil {
 				return fmt.Errorf("input processing failed: %w", err)
 			}
 			textToSegment = combined
-			if job.InputSource != "text" {
-				if err := p.jobRepo.UpdateExtractedText(ctx, job.ID, &combined); err != nil {
-					log.Warn().Err(err).Msg("Failed to update job extracted_text")
-				}
-				job.ExtractedText = &combined
-			}
 		}
 	}
 
-	// Step 1: Segment the text
+	// Step 1: Segment the text (includes extracted file content when input is files/mixed)
 	log.Info().Str("job_id", job.ID.String()).Msg("Step 1: Segmenting text")
 	segments, err := p.llmClient.SegmentText(ctx, textToSegment, job.PicturesCount, job.InputType)
 	if err != nil {

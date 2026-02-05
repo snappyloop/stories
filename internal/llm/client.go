@@ -323,6 +323,8 @@ func (c *Client) buildSegmentPrompt(text string, picturesCount int, inputType st
 
 Your task: segment the following text into exactly %d logical parts. %s
 
+Important: The text may contain multiple blocks (e.g. main content and then "---" followed by image or file descriptions). You MUST segment the ENTIRE text from start_char 0 to the last character—every part of the text must be included in some segment.
+
 Structured response requirements:
 - You must respond with a single JSON object only. No markdown, no code fences, no explanation before or after.
 - The JSON must have exactly one key: "segments", an array of objects.
@@ -440,7 +442,7 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 	}
 
 	// Validate and convert to Segment objects
-	segments := make([]*Segment, 0, len(result.Segments))
+	segments := make([]*Segment, 0, len(result.Segments)+1)
 	for _, seg := range result.Segments {
 		if seg.StartChar < 0 || seg.EndChar > len(text) || seg.StartChar >= seg.EndChar {
 			return nil, fmt.Errorf("invalid segment bounds start=%d end=%d", seg.StartChar, seg.EndChar)
@@ -454,6 +456,30 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 			Title:     &title,
 			Text:      segmentText,
 		})
+	}
+
+	// If the model did not cover the full text (e.g. only segmented the first block and ignored
+	// content after "\n\n---\n\n" such as image/file descriptions), append one segment for the remainder.
+	lastEnd := 0
+	if len(segments) > 0 {
+		lastEnd = segments[len(segments)-1].EndChar
+	}
+	if lastEnd < len(text) {
+		tail := strings.TrimSpace(text[lastEnd:])
+		if len(tail) > 0 {
+			title := "Additional content"
+			segments = append(segments, &Segment{
+				ID:        uuid.New(),
+				StartChar: lastEnd,
+				EndChar:   len(text),
+				Title:     &title,
+				Text:      text[lastEnd:],
+			})
+			log.Info().
+				Str("caller", "SegmentText").
+				Int("trailing_chars", len(text)-lastEnd).
+				Msg("Appended segment for trailing content (e.g. image/file description)")
+		}
 	}
 
 	log.Info().
