@@ -6,6 +6,8 @@ An API-first service that enriches text into segmented content with per-segment 
 
 See [doc/architecture.md](./doc/architecture.md) for detailed system design, [doc/requirements.md](./doc/requirements.md) for functional requirements, [doc/setup-and-development.md](./doc/setup-and-development.md) for setup, and [doc/webhooks.md](./doc/webhooks.md) for webhook delivery.
 
+**API reference:** [openapi.yaml](./openapi.yaml) (OpenAPI 3.0)
+
 ## Quick Start
 
 ### Prerequisites
@@ -167,6 +169,8 @@ docker-compose down
 ```
 
 ## API Documentation
+
+Full specification: **[openapi.yaml](./openapi.yaml)** (OpenAPI 3.0). Use it with Swagger UI, Redoc, or any OpenAPI tool.
 
 ### Endpoints
 

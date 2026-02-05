@@ -189,7 +189,7 @@ func (s *JobService) buildAssetResponses(assets []*models.Asset) []*models.Asset
 	out := make([]*models.AssetResponse, len(assets))
 	for i, a := range assets {
 		out[i] = &models.AssetResponse{
-			Asset:       *a,
+			Asset:       a.ToInResponse(),
 			DownloadURL: "/v1/assets/" + a.ID.String() + "/content",
 		}
 	}

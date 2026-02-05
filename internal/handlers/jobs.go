@@ -225,7 +225,7 @@ func (h *Handler) GetAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, models.AssetResponse{
-		Asset:       *asset,
+		Asset:       asset.ToInResponse(),
 		DownloadURL: "/v1/assets/" + assetID.String() + "/content",
 	})
 }

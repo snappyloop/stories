@@ -62,6 +62,31 @@ type File struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// FileInResponse is File without S3 private fields for API responses (e.g. list files)
+func (f File) ToInResponse() FileInResponse {
+	return FileInResponse{
+		ID:        f.ID,
+		UserID:    f.UserID,
+		Filename:  f.Filename,
+		MimeType:  f.MimeType,
+		SizeBytes: f.SizeBytes,
+		Status:    f.Status,
+		ExpiresAt: f.ExpiresAt,
+		CreatedAt: f.CreatedAt,
+	}
+}
+
+type FileInResponse struct {
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Filename  string    `json:"filename"`
+	MimeType  string    `json:"mime_type"`
+	SizeBytes int64     `json:"size_bytes"`
+	Status    string    `json:"status"` // pending, ready, failed, expired
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // JobFile links jobs to files
 type JobFile struct {
 	ID              uuid.UUID  `json:"id"`
@@ -96,6 +121,33 @@ type Asset struct {
 	MimeType  string         `json:"mime_type"`
 	S3Bucket  string         `json:"s3_bucket"`
 	S3Key     string         `json:"s3_key"`
+	SizeBytes int64          `json:"size_bytes"`
+	Checksum  *string        `json:"checksum,omitempty"`
+	Meta      map[string]any `json:"meta,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
+// AssetInResponse is Asset without S3 private fields for API responses
+func (a Asset) ToInResponse() AssetInResponse {
+	return AssetInResponse{
+		ID:        a.ID,
+		JobID:     a.JobID,
+		SegmentID: a.SegmentID,
+		Kind:      a.Kind,
+		MimeType:  a.MimeType,
+		SizeBytes: a.SizeBytes,
+		Checksum:  a.Checksum,
+		Meta:      a.Meta,
+		CreatedAt: a.CreatedAt,
+	}
+}
+
+type AssetInResponse struct {
+	ID        uuid.UUID      `json:"id"`
+	JobID     uuid.UUID      `json:"job_id"`
+	SegmentID *uuid.UUID     `json:"segment_id,omitempty"`
+	Kind      string         `json:"kind"` // image, audio
+	MimeType  string         `json:"mime_type"`
 	SizeBytes int64          `json:"size_bytes"`
 	Checksum  *string        `json:"checksum,omitempty"`
 	Meta      map[string]any `json:"meta,omitempty"`
@@ -163,8 +215,8 @@ type JobStatusResponse struct {
 	Files    []*JobFileResponse `json:"files"`
 }
 
-// AssetResponse represents asset metadata with download URL
+// AssetResponse represents asset metadata with download URL (S3 fields excluded)
 type AssetResponse struct {
-	Asset       Asset  `json:"asset"`
-	DownloadURL string `json:"download_url"`
+	Asset       AssetInResponse `json:"asset"`
+	DownloadURL string          `json:"download_url"`
 }

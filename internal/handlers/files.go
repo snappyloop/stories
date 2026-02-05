@@ -7,6 +7,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
 	"github.com/snappy-loop/stories/internal/auth"
+	"github.com/snappy-loop/stories/internal/models"
 )
 
 // UploadFile handles POST /v1/files (multipart/form-data, field name: file)
@@ -38,9 +39,9 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
-	sizeBytes := header.Size
 
-	resp, err := h.fileService.UploadFile(r.Context(), userID, filename, mimeType, file, sizeBytes)
+	// Size is enforced by the service from the stream (client-reported size is not trusted)
+	resp, err := h.fileService.UploadFile(r.Context(), userID, filename, mimeType, file)
 	if err != nil {
 		log.Error().Err(err).Msg("Failed to upload file")
 		writeJSONError(w, http.StatusBadRequest, err.Error())
@@ -67,8 +68,12 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	out := make([]models.FileInResponse, len(files))
+	for i, f := range files {
+		out[i] = f.ToInResponse()
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"files": files,
+		"files": out,
 	})
 }
 

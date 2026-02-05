@@ -48,11 +48,21 @@ func NewFileService(
 	}
 }
 
-// UploadFile uploads a file to S3 and creates a file record
-func (s *FileService) UploadFile(ctx context.Context, userID uuid.UUID, filename, mimeType string, data io.Reader, sizeBytes int64) (*models.UploadFileResponse, error) {
-	if sizeBytes > s.config.MaxFileSize {
-		return nil, fmt.Errorf("file size exceeds maximum of %d bytes", s.config.MaxFileSize)
-	}
+// countReader wraps an io.Reader and counts bytes read (for enforcing and recording actual size).
+type countReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// UploadFile uploads a file to S3 and creates a file record.
+// Size is enforced by limiting the stream to MaxFileSize; the actual bytes read are recorded (client-reported size is ignored).
+func (s *FileService) UploadFile(ctx context.Context, userID uuid.UUID, filename, mimeType string, data io.Reader) (*models.UploadFileResponse, error) {
 	if !allowedMimeTypes[mimeType] {
 		return nil, fmt.Errorf("unsupported mime type: %s", mimeType)
 	}
@@ -63,12 +73,22 @@ func (s *FileService) UploadFile(ctx context.Context, userID uuid.UUID, filename
 		filename = "upload"
 	}
 
+	// Enforce max size by reading at most MaxFileSize+1 bytes; we reject if more would be available
+	limited := io.LimitReader(data, s.config.MaxFileSize+1)
+	counted := &countReader{r: limited}
+
 	fileID := uuid.New()
 	expiresAt := time.Now().Add(time.Duration(s.config.FileExpirationHrs) * time.Hour)
 	s3Key := fmt.Sprintf("files/%s/%s", userID.String(), fileID.String()+getExtension(filename, mimeType))
 
-	if err := s.storage.Upload(ctx, s3Key, data, mimeType); err != nil {
+	if err := s.storage.Upload(ctx, s3Key, counted, mimeType); err != nil {
 		return nil, fmt.Errorf("failed to upload to storage: %w", err)
+	}
+
+	actualSize := counted.n
+	if actualSize > s.config.MaxFileSize {
+		_ = s.storage.Delete(ctx, s3Key)
+		return nil, fmt.Errorf("file size exceeds maximum of %d bytes", s.config.MaxFileSize)
 	}
 
 	file := &models.File{
@@ -76,7 +96,7 @@ func (s *FileService) UploadFile(ctx context.Context, userID uuid.UUID, filename
 		UserID:    userID,
 		Filename:  filename,
 		MimeType:  mimeType,
-		SizeBytes: sizeBytes,
+		SizeBytes: actualSize,
 		S3Bucket:  s.bucket,
 		S3Key:     s3Key,
 		Status:    "ready",
@@ -93,7 +113,7 @@ func (s *FileService) UploadFile(ctx context.Context, userID uuid.UUID, filename
 		Str("file_id", fileID.String()).
 		Str("user_id", userID.String()).
 		Str("filename", filename).
-		Int64("size", sizeBytes).
+		Int64("size", actualSize).
 		Msg("File uploaded")
 
 	return &models.UploadFileResponse{
