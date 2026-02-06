@@ -102,7 +102,7 @@ func main() {
 	}()
 
 	// MCP HTTP server with auth
-	mcpSrv := mcpserver.NewServer(segmentAgent, audioAgent)
+	mcpSrv := mcpserver.NewServer(segmentAgent, imageAgent)
 	mcpHandler := mcpserver.AuthMiddleware(authService)(mcpSrv.Handler())
 	mcpHTTP := &http.Server{
 		Addr:         cfg.MCPAddr,

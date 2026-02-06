@@ -111,10 +111,14 @@ func (c *Client) callGRPC(ctx context.Context, apiKey, action string, params map
 	ctx = c.ctxWithAuth(ctx, apiKey)
 	switch action {
 	case "segment_text":
+		it := getStr(params, "input_type")
+		if it == "" {
+			it = "educational"
+		}
 		req := &segmentationv1.SegmentTextRequest{
 			Text:          getStr(params, "text"),
 			SegmentsCount: getInt(params, "segments_count"),
-			InputType:     getStr(params, "input_type"),
+			InputType:     it,
 		}
 		if req.SegmentsCount < 1 {
 			req.SegmentsCount = 1
@@ -125,10 +129,18 @@ func (c *Client) callGRPC(ctx context.Context, apiKey, action string, params map
 		}
 		return segmentResponseToMap(resp), nil
 	case "generate_narration":
+		at := getStr(params, "audio_type")
+		if at == "" {
+			at = "free_speech"
+		}
+		it := getStr(params, "input_type")
+		if it == "" {
+			it = "educational"
+		}
 		req := &audiov1.GenerateNarrationRequest{
 			Text:      getStr(params, "text"),
-			AudioType: getStr(params, "audio_type"),
-			InputType: getStr(params, "input_type"),
+			AudioType: at,
+			InputType: it,
 		}
 		resp, err := c.audioCli.GenerateNarration(ctx, req)
 		if err != nil {
@@ -136,9 +148,13 @@ func (c *Client) callGRPC(ctx context.Context, apiKey, action string, params map
 		}
 		return map[string]interface{}{"script": resp.GetScript()}, nil
 	case "generate_audio":
+		at := getStr(params, "audio_type")
+		if at == "" {
+			at = "free_speech"
+		}
 		req := &audiov1.GenerateAudioRequest{
 			Script:    getStr(params, "script"),
-			AudioType: getStr(params, "audio_type"),
+			AudioType: at,
 		}
 		resp, err := c.audioCli.GenerateAudio(ctx, req)
 		if err != nil {
@@ -160,9 +176,13 @@ func (c *Client) callGRPC(ctx context.Context, apiKey, action string, params map
 		}
 		return out, nil
 	case "generate_image_prompt":
+		it := getStr(params, "input_type")
+		if it == "" {
+			it = "educational"
+		}
 		req := &imagev1.GenerateImagePromptRequest{
 			Text:      getStr(params, "text"),
-			InputType: getStr(params, "input_type"),
+			InputType: it,
 		}
 		resp, err := c.imageCli.GenerateImagePrompt(ctx, req)
 		if err != nil {
@@ -232,30 +252,19 @@ func (c *Client) callMCP(ctx context.Context, apiKey, action string, params map[
 			it = "educational"
 		}
 		args["input_type"] = it
-	case "generate_narration":
-		mcpAction = "generate_narration"
+	case "generate_narration", "generate_audio":
+		return nil, fmt.Errorf("MCP does not support action %s (use gRPC for audio)", action)
+	case "generate_image_prompt":
+		mcpAction = "generate_image_prompt"
 		args["text"] = getStr(params, "text")
-		at := getStr(params, "audio_type")
-		if at == "" {
-			at = "free_speech"
-		}
-		args["audio_type"] = at
 		it := getStr(params, "input_type")
 		if it == "" {
 			it = "educational"
 		}
 		args["input_type"] = it
-	case "generate_audio":
-		mcpAction = "generate_audio"
-		args["script"] = getStr(params, "script")
-		at := getStr(params, "audio_type")
-		if at == "" {
-			at = "free_speech"
-		}
-		args["audio_type"] = at
-	case "generate_image_prompt", "generate_image":
-		// MCP server only has segment_text, generate_narration, generate_audio
-		return nil, fmt.Errorf("MCP does not support action %s", action)
+	case "generate_image":
+		mcpAction = "generate_image"
+		args["prompt"] = getStr(params, "prompt")
 	default:
 		return nil, fmt.Errorf("unknown action: %s", action)
 	}

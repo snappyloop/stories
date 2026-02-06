@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/snappy-loop/stories/internal/agents"
@@ -69,14 +70,14 @@ type contentItem struct {
 // Server implements MCP JSON-RPC 2.0 over HTTP (tools/list and tools/call).
 type Server struct {
 	segmentAgent agents.SegmentationAgent
-	audioAgent   agents.AudioAgent
+	imageAgent   agents.ImageAgent
 }
 
 // NewServer returns a new MCP server that uses the given agents.
-func NewServer(segmentAgent agents.SegmentationAgent, audioAgent agents.AudioAgent) *Server {
+func NewServer(segmentAgent agents.SegmentationAgent, imageAgent agents.ImageAgent) *Server {
 	return &Server{
 		segmentAgent: segmentAgent,
-		audioAgent:   audioAgent,
+		imageAgent:   imageAgent,
 	}
 }
 
@@ -133,36 +134,34 @@ func (s *Server) handleToolsList() (interface{}, *rpcError) {
 				InputSchema: inputSchema{
 					Type: "object",
 					Properties: map[string]schemaProp{
-						"text":            {Type: "string", Description: "Full text to segment"},
-						"segments_count":  {Type: "number", Description: "Target number of segments"},
-						"input_type":      {Type: "string", Description: "educational, financial, or fictional"},
+						"text":           {Type: "string", Description: "Full text to segment"},
+						"segments_count": {Type: "number", Description: "Target number of segments"},
+						"input_type":     {Type: "string", Description: "educational, financial, or fictional"},
 					},
 					Required: []string{"text", "segments_count", "input_type"},
 				},
 			},
 			{
-				Name:        "generate_narration",
-				Description: "Generate a narration script for given text",
+				Name:        "generate_image_prompt",
+				Description: "Generate an image generation prompt from text",
 				InputSchema: inputSchema{
 					Type: "object",
 					Properties: map[string]schemaProp{
-						"text":       {Type: "string", Description: "Segment or text to narrate"},
-						"audio_type": {Type: "string", Description: "free_speech or podcast"},
+						"text":       {Type: "string", Description: "Text to describe as image"},
 						"input_type": {Type: "string", Description: "educational, financial, or fictional"},
 					},
-					Required: []string{"text", "audio_type", "input_type"},
+					Required: []string{"text", "input_type"},
 				},
 			},
 			{
-				Name:        "generate_audio",
-				Description: "Generate TTS audio from a narration script",
+				Name:        "generate_image",
+				Description: "Generate an image from a prompt",
 				InputSchema: inputSchema{
 					Type: "object",
 					Properties: map[string]schemaProp{
-						"script":     {Type: "string", Description: "Narration script text"},
-						"audio_type": {Type: "string", Description: "free_speech or podcast"},
+						"prompt": {Type: "string", Description: "Image generation prompt"},
 					},
-					Required: []string{"script", "audio_type"},
+					Required: []string{"prompt"},
 				},
 			},
 		},
@@ -182,10 +181,10 @@ func (s *Server) handleToolsCall(ctx context.Context, paramsRaw json.RawMessage)
 	switch params.Name {
 	case "segment_text":
 		return s.callSegmentText(ctx, params.Arguments)
-	case "generate_narration":
-		return s.callGenerateNarration(ctx, params.Arguments)
-	case "generate_audio":
-		return s.callGenerateAudio(ctx, params.Arguments)
+	case "generate_image_prompt":
+		return s.callGenerateImagePrompt(ctx, params.Arguments)
+	case "generate_image":
+		return s.callGenerateImage(ctx, params.Arguments)
 	default:
 		return nil, &rpcError{Code: -32602, Message: "Unknown tool: " + params.Name}
 	}
@@ -251,17 +250,13 @@ func (s *Server) callSegmentText(ctx context.Context, args map[string]interface{
 	}, nil
 }
 
-func (s *Server) callGenerateNarration(ctx context.Context, args map[string]interface{}) (interface{}, *rpcError) {
+func (s *Server) callGenerateImagePrompt(ctx context.Context, args map[string]interface{}) (interface{}, *rpcError) {
 	text := getStr(args, "text")
-	audioType := getStr(args, "audio_type")
-	if audioType == "" {
-		audioType = "free_speech"
-	}
 	inputType := getStr(args, "input_type")
 	if inputType == "" {
 		inputType = "educational"
 	}
-	script, err := s.audioAgent.GenerateNarration(ctx, text, audioType, inputType)
+	prompt, err := s.imageAgent.GenerateImagePrompt(ctx, text, inputType)
 	if err != nil {
 		return &toolsCallResult{
 			Content: []contentItem{{Type: "text", Text: err.Error()}},
@@ -269,48 +264,43 @@ func (s *Server) callGenerateNarration(ctx context.Context, args map[string]inte
 		}, nil
 	}
 	return &toolsCallResult{
-		Content: []contentItem{{Type: "text", Text: script}},
+		Content: []contentItem{{Type: "text", Text: prompt}},
 		IsError: false,
 	}, nil
 }
 
-func (s *Server) callGenerateAudio(ctx context.Context, args map[string]interface{}) (interface{}, *rpcError) {
-	script := getStr(args, "script")
-	audioType := getStr(args, "audio_type")
-	if audioType == "" {
-		audioType = "free_speech"
-	}
-	audio, err := s.audioAgent.GenerateAudio(ctx, script, audioType)
+func (s *Server) callGenerateImage(ctx context.Context, args map[string]interface{}) (interface{}, *rpcError) {
+	prompt := getStr(args, "prompt")
+	img, err := s.imageAgent.GenerateImage(ctx, prompt)
 	if err != nil {
 		return &toolsCallResult{
 			Content: []contentItem{{Type: "text", Text: err.Error()}},
 			IsError: true,
 		}, nil
 	}
-	if audio == nil {
+	if img == nil || img.Data == nil {
 		return &toolsCallResult{
-			Content: []contentItem{{Type: "text", Text: "audio agent returned nil result"}},
+			Content: []contentItem{{Type: "text", Text: "image agent returned nil result"}},
 			IsError: true,
 		}, nil
 	}
-	data, err := agents.AudioData(audio)
+	data, err := io.ReadAll(img.Data)
 	if err != nil {
 		return &toolsCallResult{
 			Content: []contentItem{{Type: "text", Text: err.Error()}},
 			IsError: true,
 		}, nil
 	}
-	mimeType := audio.MimeType
+	mimeType := img.MimeType
 	if mimeType == "" {
-		mimeType = "audio/wav"
+		mimeType = "image/png"
 	}
-	// Return as text content with JSON: base64 data + metadata (client can decode and play).
 	meta := map[string]interface{}{
 		"data_base64": base64.StdEncoding.EncodeToString(data),
 		"mime_type":   mimeType,
-		"size":        audio.Size,
-		"duration":   audio.Duration,
-		"model":      audio.Model,
+		"size":        img.Size,
+		"resolution":  img.Resolution,
+		"model":       img.Model,
 	}
 	metaJSON, _ := json.Marshal(meta)
 	return &toolsCallResult{
