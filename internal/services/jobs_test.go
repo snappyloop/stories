@@ -196,8 +196,8 @@ func TestCreateJob_ValidationErrors(t *testing.T) {
 	}{
 		{"empty text and no file_ids", &models.CreateJobRequest{Text: "", Type: "educational", SegmentsCount: 2, AudioType: "free_speech"}, "either text or file_ids is required"},
 		{"invalid type", &models.CreateJobRequest{Text: "Some text", Type: "invalid", SegmentsCount: 2, AudioType: "free_speech"}, "invalid type"},
-		{"segments_count too low", &models.CreateJobRequest{Text: "Some text", Type: "educational", SegmentsCount: 0, AudioType: "free_speech"}, "segments_count must be between 1 and 20"},
-		{"segments_count too high", &models.CreateJobRequest{Text: "Some text", Type: "educational", SegmentsCount: 100, AudioType: "free_speech"}, "segments_count must be between 1 and"},
+		{"segments_count too low", &models.CreateJobRequest{Text: "Some text", Type: "educational", SegmentsCount: 0, AudioType: "free_speech"}, "segments_count must be between 1 and 5"},
+		{"segments_count too high", &models.CreateJobRequest{Text: "Some text", Type: "educational", SegmentsCount: 100, AudioType: "free_speech"}, "segments_count must be between 1 and 5"},
 		{"invalid audio_type", &models.CreateJobRequest{Text: "Some text", Type: "educational", SegmentsCount: 2, AudioType: "invalid"}, "invalid audio_type"},
 	}
 
