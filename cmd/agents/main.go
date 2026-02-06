@@ -123,10 +123,24 @@ func main() {
 
 	log.Info().Msg("Shutting down agents...")
 
+	// gRPC: bounded graceful stop so it cannot block forever and starve MCP shutdown
+	grpcDone := make(chan struct{})
+	go func() {
+		grpcSrv.GracefulStop()
+		close(grpcDone)
+	}()
+	select {
+	case <-grpcDone:
+		// normal finish
+	case <-time.After(10 * time.Second):
+		log.Warn().Msg("gRPC graceful stop timed out; stopping")
+		grpcSrv.Stop()
+		<-grpcDone
+	}
+
+	// MCP: use a fresh context so it always gets a full timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	grpcSrv.GracefulStop()
 	if err := mcpHTTP.Shutdown(ctx); err != nil {
 		log.Error().Err(err).Msg("MCP HTTP shutdown error")
 	}

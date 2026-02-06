@@ -278,6 +278,21 @@ func (c *Client) callMCP(ctx context.Context, apiKey, action string, params map[
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// Non-2xx (e.g. 401 from auth middleware) returns {"error": "string"}, not JSON-RPC.
+	// Handle that first so we surface "invalid api key" etc. instead of "decode MCP response".
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		var errBody struct {
+			Error string `json:"error"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&errBody)
+		msg := errBody.Error
+		if msg == "" {
+			msg = resp.Status
+		}
+		return nil, fmt.Errorf("MCP request failed (HTTP %d): %s", resp.StatusCode, msg)
+	}
+
 	var mcpResp struct {
 		JSONRPC string      `json:"jsonrpc"`
 		ID      interface{} `json:"id"`

@@ -287,6 +287,12 @@ func (s *Server) callGenerateAudio(ctx context.Context, args map[string]interfac
 			IsError: true,
 		}, nil
 	}
+	if audio == nil {
+		return &toolsCallResult{
+			Content: []contentItem{{Type: "text", Text: "audio agent returned nil result"}},
+			IsError: true,
+		}, nil
+	}
 	data, err := agents.AudioData(audio)
 	if err != nil {
 		return &toolsCallResult{

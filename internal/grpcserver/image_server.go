@@ -40,8 +40,11 @@ func (s *ImageServer) GenerateImage(ctx context.Context, req *imagev1.GenerateIm
 	if err != nil {
 		return nil, err
 	}
+	if img == nil {
+		return nil, fmt.Errorf("image agent returned nil result")
+	}
 	var data []byte
-	if img != nil && img.Data != nil {
+	if img.Data != nil {
 		data, err = io.ReadAll(img.Data)
 		if err != nil {
 			return nil, err

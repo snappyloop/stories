@@ -39,6 +39,9 @@ func (s *AudioServer) GenerateAudio(ctx context.Context, req *audiov1.GenerateAu
 	if err != nil {
 		return nil, err
 	}
+	if audio == nil {
+		return nil, fmt.Errorf("audio agent returned nil result")
+	}
 	data, err := agents.AudioData(audio)
 	if err != nil {
 		return nil, err
