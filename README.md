@@ -6,7 +6,7 @@ An API-first service that enriches text into segmented content with per-segment 
 
 ## Google Gemini 3 integration
 
-This project is built for the [Gemini 3 Hackathon](https://gemini3.devpost.com) and **uses multiple Gemini 3 models** across the pipeline:
+This project **uses multiple Gemini 3 models** across the pipeline:
 
 | Use case | Model | Role |
 |----------|--------|------|
