@@ -124,7 +124,7 @@ curl -X POST http://localhost:8080/v1/jobs \
   -d '{
     "text": "The solar system consists of the Sun and eight planets...",
     "type": "educational",
-    "pictures_count": 3,
+    "segments_count": 3,
     "audio_type": "free_speech",
     "webhook": {
       "url": "https://your-webhook.com/callback"

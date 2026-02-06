@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package segmentation.v1;
+
+option go_package = "github.com/snappy-loop/stories/gen/segmentation/v1;segmentationv1";
+
+service SegmentationService {
+  rpc SegmentText(SegmentTextRequest) returns (SegmentTextResponse);
+}
+
+message SegmentTextRequest {
+  string text = 1;
+  int32 segments_count = 2;
+  string input_type = 3;
+}
+
+message Segment {
+  int32 start_char = 1;
+  int32 end_char = 2;
+  string title = 3;
+  string text = 4;
+}
+
+message SegmentTextResponse {
+  repeated Segment segments = 1;
+}

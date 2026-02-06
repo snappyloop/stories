@@ -201,7 +201,7 @@ curl -X POST http://localhost:8080/v1/jobs \
   -d '{
     "text": "Test text...",
     "type": "educational",
-    "pictures_count": 1,
+    "segments_count": 1,
     "audio_type": "free_speech",
     "webhook": {
       "url": "https://your-endpoint.com/webhook",

@@ -19,8 +19,8 @@ func (noopJobPublisher) PublishJob(context.Context, uuid.UUID, string) error { r
 
 // fakeJobRepo is an in-memory job repository for tests.
 type fakeJobRepo struct {
-	mu    sync.Mutex
-	jobs  map[uuid.UUID]*models.Job
+	mu     sync.Mutex
+	jobs   map[uuid.UUID]*models.Job
 	byUser map[uuid.UUID][]*models.Job
 }
 
@@ -164,11 +164,11 @@ func (f *fakeAPIKeyRepo) CreateAPIKey(ctx context.Context, userID uuid.UUID, quo
 
 func TestCreateJob_ValidationErrors(t *testing.T) {
 	cfg := &config.Config{
-		MaxFilesPerJob:    10,
-		MaxInputLength:    50000,
-		MaxPicturesCount:  20,
-		CharsPerFile:      1000,
-		DefaultQuotaChars: 100000,
+		MaxFilesPerJob:     10,
+		MaxInputLength:     50000,
+		MaxSegmentsCount:   5,
+		CharsPerFile:       1000,
+		DefaultQuotaChars:  100000,
 		DefaultQuotaPeriod: "monthly",
 	}
 
@@ -194,11 +194,11 @@ func TestCreateJob_ValidationErrors(t *testing.T) {
 		req  *models.CreateJobRequest
 		want string
 	}{
-		{"empty text and no file_ids", &models.CreateJobRequest{Text: "", Type: "educational", PicturesCount: 2, AudioType: "free_speech"}, "either text or file_ids is required"},
-		{"invalid type", &models.CreateJobRequest{Text: "Some text", Type: "invalid", PicturesCount: 2, AudioType: "free_speech"}, "invalid type"},
-		{"pictures_count too low", &models.CreateJobRequest{Text: "Some text", Type: "educational", PicturesCount: 0, AudioType: "free_speech"}, "pictures_count must be between 1 and 20"},
-		{"pictures_count too high", &models.CreateJobRequest{Text: "Some text", Type: "educational", PicturesCount: 100, AudioType: "free_speech"}, "pictures_count must be between 1 and"},
-		{"invalid audio_type", &models.CreateJobRequest{Text: "Some text", Type: "educational", PicturesCount: 2, AudioType: "invalid"}, "invalid audio_type"},
+		{"empty text and no file_ids", &models.CreateJobRequest{Text: "", Type: "educational", SegmentsCount: 2, AudioType: "free_speech"}, "either text or file_ids is required"},
+		{"invalid type", &models.CreateJobRequest{Text: "Some text", Type: "invalid", SegmentsCount: 2, AudioType: "free_speech"}, "invalid type"},
+		{"segments_count too low", &models.CreateJobRequest{Text: "Some text", Type: "educational", SegmentsCount: 0, AudioType: "free_speech"}, "segments_count must be between 1 and 20"},
+		{"segments_count too high", &models.CreateJobRequest{Text: "Some text", Type: "educational", SegmentsCount: 100, AudioType: "free_speech"}, "segments_count must be between 1 and"},
+		{"invalid audio_type", &models.CreateJobRequest{Text: "Some text", Type: "educational", SegmentsCount: 2, AudioType: "invalid"}, "invalid audio_type"},
 	}
 
 	for _, tt := range tests {
@@ -216,11 +216,11 @@ func TestCreateJob_ValidationErrors(t *testing.T) {
 
 func TestCreateJob_Success(t *testing.T) {
 	cfg := &config.Config{
-		MaxFilesPerJob:    10,
-		MaxInputLength:    50000,
-		MaxPicturesCount:  20,
-		CharsPerFile:      1000,
-		DefaultQuotaChars: 100000,
+		MaxFilesPerJob:     10,
+		MaxInputLength:     50000,
+		MaxSegmentsCount:   20,
+		CharsPerFile:       1000,
+		DefaultQuotaChars:  100000,
 		DefaultQuotaPeriod: "monthly",
 	}
 
@@ -252,7 +252,7 @@ func TestCreateJob_Success(t *testing.T) {
 	req := &models.CreateJobRequest{
 		Text:          "Short test text for job creation.",
 		Type:          "educational",
-		PicturesCount: 1,
+		SegmentsCount: 1,
 		AudioType:     "free_speech",
 	}
 
@@ -301,7 +301,7 @@ func TestGetJob_AccessDenied(t *testing.T) {
 	// Pre-insert a job owned by user1
 	jobRepo.Create(context.Background(), &models.Job{
 		ID: jobID, UserID: user1ID, APIKeyID: key1ID, Status: "queued",
-		InputType: "educational", PicturesCount: 1, AudioType: "free_speech",
+		InputType: "educational", SegmentsCount: 1, AudioType: "free_speech",
 		InputText: "test", InputSource: "text", CreatedAt: time.Now(),
 	})
 

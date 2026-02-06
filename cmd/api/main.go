@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/snappy-loop/stories/internal/agentsclient"
 	"github.com/snappy-loop/stories/internal/auth"
 	"github.com/snappy-loop/stories/internal/config"
 	"github.com/snappy-loop/stories/internal/database"
@@ -65,6 +66,17 @@ func main() {
 	fileRepo := database.NewFileRepository(db)
 	fileService := services.NewFileService(fileRepo, storageClient, cfg.S3Bucket, cfg)
 
+	var agentsClient *agentsclient.Client
+	if cfg.AgentsGRPCURL != "" && cfg.AgentsMCPURL != "" {
+		var err error
+		agentsClient, err = agentsclient.NewClient(cfg.AgentsGRPCURL, cfg.AgentsMCPURL)
+		if err != nil {
+			log.Warn().Err(err).Msg("Agents client not available; /agents page will return 503 for calls")
+		} else {
+			defer agentsClient.Close()
+		}
+	}
+
 	h := handlers.NewHandler(
 		jobService,
 		fileService,
@@ -73,7 +85,8 @@ func main() {
 		apiKeyRepo,
 		cfg.DefaultQuotaChars,
 		cfg.DefaultQuotaPeriod,
-		cfg.MaxPicturesCount,
+		cfg.MaxSegmentsCount,
+		agentsClient,
 	)
 
 	authService := auth.NewService(db)
@@ -81,6 +94,9 @@ func main() {
 	r := mux.NewRouter()
 	r.HandleFunc("/", h.Index).Methods("GET")
 	r.HandleFunc("/generation", h.Generation).Methods("GET")
+	r.HandleFunc("/agents", h.AgentsPage).Methods("GET")
+	r.HandleFunc("/agents/ws", h.AgentsWS)
+	r.HandleFunc("/agents/call", h.AgentsCall).Methods("POST")
 	// POST /users (CreateUser) not registered; handler kept for later use
 	r.HandleFunc("/view/asset/{id}", h.ViewAsset).Methods("GET")
 	r.HandleFunc("/view/{id}", h.ViewJob).Methods("GET")

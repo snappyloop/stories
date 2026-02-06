@@ -33,7 +33,7 @@ type Job struct {
 	APIKeyID      uuid.UUID  `json:"api_key_id"`
 	Status        string     `json:"status"`     // queued, running, succeeded, failed, canceled
 	InputType     string     `json:"input_type"` // educational, financial, fictional
-	PicturesCount int        `json:"pictures_count"`
+	SegmentsCount int        `json:"segments_count"`
 	AudioType     string     `json:"audio_type"` // free_speech, podcast
 	InputText     string     `json:"input_text"`
 	InputSource   string     `json:"input_source"`   // text, files, mixed
@@ -171,7 +171,7 @@ type CreateJobRequest struct {
 	Text          string         `json:"text,omitempty"`
 	FileIDs       []uuid.UUID    `json:"file_ids,omitempty"`
 	Type          string         `json:"type"` // educational, financial, fictional
-	PicturesCount int            `json:"pictures_count"`
+	SegmentsCount int            `json:"segments_count"`
 	AudioType     string         `json:"audio_type"` // free_speech, podcast
 	Webhook       *WebhookConfig `json:"webhook,omitempty"`
 }

@@ -113,9 +113,9 @@ All TODOs from `cmd/worker/main.go` have been successfully implemented. The work
 
 ### Step 1: Text Segmentation
 ```go
-// Input: Full text, pictures_count, input_type
+// Input: Full text, segments_count, input_type
 // Output: Array of segments with start/end positions
-segments := llmClient.SegmentText(ctx, text, picturesCount, inputType)
+segments := llmClient.SegmentText(ctx, text, segmentsCount, inputType)
 
 // Example segment:
 {
@@ -309,7 +309,7 @@ curl -X POST http://localhost:8080/v1/jobs \
   -d '{
     "text": "The solar system consists of the Sun...",
     "type": "educational",
-    "pictures_count": 3,
+    "segments_count": 3,
     "audio_type": "free_speech"
   }'
 ```
@@ -332,7 +332,7 @@ curl http://localhost:8080/v1/jobs/{job_id} \
 
 ### Processing Limits
 - `MAX_INPUT_LENGTH` - Maximum text length (default: 50,000 chars)
-- `MAX_PICTURES_COUNT` - Maximum segments (default: 20)
+- `MAX_SEGMENTS_COUNT` - Maximum segments (default: 20)
 - `MAX_CONCURRENT_SEGMENTS` - Concurrent processing (default: 5, currently sequential)
 
 ### LLM Models

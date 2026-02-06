@@ -81,7 +81,7 @@ curl -X POST http://localhost:8080/v1/jobs \
   -d '{
     "text": "The solar system consists of the Sun and everything that orbits it...",
     "type": "educational",
-    "pictures_count": 3,
+    "segments_count": 3,
     "audio_type": "free_speech",
     "webhook": {
       "url": "https://your-webhook-endpoint.com/callback"
@@ -202,7 +202,7 @@ Create a new enrichment job.
 {
   "text": "string (required, max 50k chars)",
   "type": "educational|financial|fictional (required)",
-  "pictures_count": "integer (required, 1-20)",
+  "segments_count": "integer (required, 1-20)",
   "audio_type": "free_speech|podcast (required)",
   "webhook": {
     "url": "string (optional)",

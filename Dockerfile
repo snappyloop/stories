@@ -23,6 +23,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /stories-dispatcher ./cmd/dispatcher
 
+# Build Agents binary (gRPC + MCP)
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /stories-agents ./cmd/agents
+
 # Final stage
 FROM alpine:latest
 
@@ -34,11 +38,12 @@ RUN apk --no-cache add ca-certificates tzdata
 COPY --from=builder /stories-api .
 COPY --from=builder /stories-worker .
 COPY --from=builder /stories-dispatcher .
+COPY --from=builder /stories-agents .
 
 RUN adduser -D appuser
 USER appuser
 
-EXPOSE 8080
+EXPOSE 8080 9090 9091
 
 # Default to API server, can be overridden
 CMD ["./stories-api"]

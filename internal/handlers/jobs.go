@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
+	"github.com/snappy-loop/stories/internal/agentsclient"
 	"github.com/snappy-loop/stories/internal/auth"
 	"github.com/snappy-loop/stories/internal/database"
 	"github.com/snappy-loop/stories/internal/markup"
@@ -41,10 +42,11 @@ type Handler struct {
 	apiKeyRepo         *database.APIKeyRepository
 	defaultQuotaChars  int64
 	defaultQuotaPeriod string
-	maxPicturesCount   int
+	maxSegmentsCount   int
+	agentsClient       *agentsclient.Client
 }
 
-// NewHandler creates a new handler
+// NewHandler creates a new handler. agentsClient may be nil if the agents service is not configured.
 func NewHandler(
 	jobService jobService,
 	fileService *services.FileService,
@@ -53,7 +55,8 @@ func NewHandler(
 	apiKeyRepo *database.APIKeyRepository,
 	defaultQuotaChars int64,
 	defaultQuotaPeriod string,
-	maxPicturesCount int,
+	maxSegmentsCount int,
+	agentsClient *agentsclient.Client,
 ) *Handler {
 	return &Handler{
 		jobService:         jobService,
@@ -63,7 +66,8 @@ func NewHandler(
 		apiKeyRepo:         apiKeyRepo,
 		defaultQuotaChars:  defaultQuotaChars,
 		defaultQuotaPeriod: defaultQuotaPeriod,
-		maxPicturesCount:   maxPicturesCount,
+		maxSegmentsCount:   maxSegmentsCount,
+		agentsClient:       agentsClient,
 	}
 }
 
@@ -78,8 +82,8 @@ func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Generation(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	maxStr := strconv.Itoa(h.maxPicturesCount)
-	html := strings.ReplaceAll(generationHTML, "__MAX_PICTURES_COUNT__", maxStr)
+	maxStr := strconv.Itoa(h.maxSegmentsCount)
+	html := strings.ReplaceAll(generationHTML, "__MAX_SEGMENTS_COUNT__", maxStr)
 	w.Write([]byte(html))
 }
 
@@ -484,7 +488,7 @@ const indexHTML = `<!DOCTYPE html>
 </head>
 <body>
   <h1>Great Stories</h1>
-  <p><a href="/" class="nav-link">Tasks</a><a href="/generation" class="nav-link">Generation</a></p>
+  <p><a href="/" class="nav-link">Tasks</a><a href="/generation" class="nav-link">Generation</a><a href="/agents" class="nav-link">Agents</a></p>
 
   <section class="index-api-section">
     <label for="index-api-key">API key</label>
@@ -496,7 +500,7 @@ const indexHTML = `<!DOCTYPE html>
 
   <table id="index-tasks-table" class="tasks-table" style="display:none;">
     <thead>
-      <tr><th>Job ID</th><th>Status</th><th>Type</th><th>Photos</th><th>Speech</th><th>Created</th><th></th></tr>
+      <tr><th>Job ID</th><th>Status</th><th>Type</th><th>Segments</th><th>Speech</th><th>Created</th><th></th></tr>
     </thead>
     <tbody id="index-tasks-body"></tbody>
   </table>
@@ -541,10 +545,10 @@ const indexHTML = `<!DOCTYPE html>
             const shortId = contractId(id);
             const status = job.status || '';
             const type = job.input_type || '';
-            const photos = job.pictures_count != null ? job.pictures_count : '';
+            const segments = job.segments_count != null ? job.segments_count : '';
             const speech = job.audio_type || '';
             const created = job.created_at ? new Date(job.created_at).toLocaleString() : '';
-            tr.innerHTML = '<td class="job-id-cell" title="' + id.replace(/"/g, '&quot;') + '"><code style="font-size:0.85em">' + shortId + '</code></td><td>' + status + '</td><td>' + type + '</td><td>' + photos + '</td><td>' + speech + '</td><td>' + created + '</td><td><a href="/view/' + id + '">View</a></td>';
+            tr.innerHTML = '<td class="job-id-cell" title="' + id.replace(/"/g, '&quot;') + '"><code style="font-size:0.85em">' + shortId + '</code></td><td>' + status + '</td><td>' + type + '</td><td>' + segments + '</td><td>' + speech + '</td><td>' + created + '</td><td><a href="/view/' + id + '">View</a></td>';
             bodyEl.appendChild(tr);
           });
         }
@@ -599,7 +603,7 @@ const generationHTML = `<!DOCTYPE html>
 </head>
 <body>
   <h1>Great Stories — Generation</h1>
-  <p><a href="/" class="nav-link">Tasks</a><a href="/generation" class="nav-link">Generation</a></p>
+  <p><a href="/" class="nav-link">Tasks</a><a href="/generation" class="nav-link">Generation</a><a href="/agents" class="nav-link">Agents</a></p>
   <p>Send a test job request and check job status.</p>
 
   <details class="api-docs">
@@ -612,7 +616,7 @@ const generationHTML = `<!DOCTYPE html>
   "text": "string (optional if file_ids provided)",
   "file_ids": ["uuid", "..."],
   "type": "educational | financial | fictional",
-  "pictures_count": "integer (1–max from config)",
+  "segments_count": "integer (1–max from config)",
   "audio_type": "free_speech | podcast",
   "webhook": { "url": "string (optional)", "secret": "string (optional)" }
 }</pre>
@@ -649,8 +653,8 @@ const generationHTML = `<!DOCTYPE html>
         <option value="financial">Financial</option>
         <option value="fictional">Fictional</option>
       </select>
-      <label for="pictures_count">Pictures count</label>
-      <input type="number" id="pictures_count" name="pictures_count" value="2" min="1" max="__MAX_PICTURES_COUNT__">
+      <label for="segments_count">Segments count</label>
+      <input type="number" id="segments_count" name="segments_count" value="2" min="1" max="__MAX_SEGMENTS_COUNT__">
       <label for="audio_type">Audio type</label>
       <select id="audio_type" name="audio_type">
         <option value="free_speech">Free speech</option>
@@ -683,7 +687,7 @@ const generationHTML = `<!DOCTYPE html>
 
   <script>
     var MAX_TEXT_LENGTH = 50000;
-    var MAX_PICTURES_COUNT = __MAX_PICTURES_COUNT__;
+    var MAX_SEGMENTS_COUNT = __MAX_SEGMENTS_COUNT__;
     var textEl = document.getElementById('text');
     var remainingEl = document.getElementById('text-remaining');
     function updateRemaining() {
@@ -729,9 +733,9 @@ const generationHTML = `<!DOCTYPE html>
         resultEl.classList.add('error');
         return;
       }
-      const picturesCount = parseInt(document.getElementById('pictures_count').value, 10) || 2;
-      if (picturesCount > MAX_PICTURES_COUNT || picturesCount < 1) {
-        resultEl.textContent = 'Pictures count must be between 1 and ' + MAX_PICTURES_COUNT + '.';
+      const segmentsCount = parseInt(document.getElementById('segments_count').value, 10) || 2;
+      if (segmentsCount > MAX_SEGMENTS_COUNT || segmentsCount < 1) {
+        resultEl.textContent = 'Segments count must be between 1 and ' + MAX_SEGMENTS_COUNT + '.';
         resultEl.classList.add('error');
         return;
       }
@@ -773,7 +777,7 @@ const generationHTML = `<!DOCTYPE html>
 
       var payload = {
         type: document.getElementById('type').value,
-        pictures_count: picturesCount,
+        segments_count: segmentsCount,
         audio_type: document.getElementById('audio_type').value
       };
       if (text) payload.text = text;

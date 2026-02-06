@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package audio.v1;
+
+option go_package = "github.com/snappy-loop/stories/gen/audio/v1;audiov1";
+
+service AudioService {
+  rpc GenerateNarration(GenerateNarrationRequest) returns (GenerateNarrationResponse);
+  rpc GenerateAudio(GenerateAudioRequest) returns (GenerateAudioResponse);
+}
+
+message GenerateNarrationRequest {
+  string text = 1;
+  string audio_type = 2;
+  string input_type = 3;
+}
+
+message GenerateNarrationResponse {
+  string script = 1;
+}
+
+message GenerateAudioRequest {
+  string script = 1;
+  string audio_type = 2;
+}
+
+message GenerateAudioResponse {
+  bytes data = 1;
+  int64 size = 2;
+  double duration = 3;
+  string mime_type = 4;
+  string model = 5;
+  string url = 6;  // when set, audio is served from this URL instead of inline data
+}

@@ -1,4 +1,4 @@
-.PHONY: help build test clean up down logs migrate
+.PHONY: help build test clean up down logs migrate proto
 
 help: ## Show this help message
 	@echo 'Usage: make [target]'
@@ -6,12 +6,22 @@ help: ## Show this help message
 	@echo 'Available targets:'
 	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
+proto: ## Generate Go code from proto files (requires protoc, protoc-gen-go, protoc-gen-go-grpc)
+	@mkdir -p gen
+	PATH="$$PATH:$$(go env GOPATH)/bin" protoc --go_out=. --go_opt=module=github.com/snappy-loop/stories \
+		--go-grpc_out=. --go-grpc_opt=module=github.com/snappy-loop/stories \
+		proto/segmentation/v1/segmentation.proto \
+		proto/audio/v1/audio.proto \
+		proto/image/v1/image.proto
+	@echo "Proto code generated in gen/"
+
 build: ## Build all binaries
 	@echo "Building binaries..."
 	@mkdir -p bin
 	CGO_ENABLED=0 go build -o bin/stories-api ./cmd/api
 	CGO_ENABLED=0 go build -o bin/stories-worker ./cmd/worker
 	CGO_ENABLED=0 go build -o bin/stories-dispatcher ./cmd/dispatcher
+	CGO_ENABLED=0 go build -o bin/stories-agents ./cmd/agents
 	@echo "Done!"
 
 test: ## Run tests

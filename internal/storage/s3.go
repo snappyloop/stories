@@ -15,8 +15,9 @@ import (
 
 // Client wraps S3 storage operations
 type Client struct {
-	s3Client *s3.Client
-	bucket   string
+	s3Client  *s3.Client
+	bucket    string
+	publicURL string // optional base URL for public bucket (e.g. http://localhost:9000/stories-assets)
 }
 
 // NewClient creates a new S3 storage client
@@ -53,9 +54,21 @@ func NewClient(endpoint, region, bucket, accessKey, secretKey string, useSSL boo
 		Msg("S3 client initialized")
 
 	return &Client{
-		s3Client: s3Client,
-		bucket:   bucket,
+		s3Client:  s3Client,
+		bucket:    bucket,
+		publicURL: publicURL,
 	}, nil
+}
+
+// PublicURL returns the public URL for an object key. Empty if publicURL was not configured.
+func (c *Client) PublicURL(key string) string {
+	if c.publicURL == "" {
+		return ""
+	}
+	if c.publicURL[len(c.publicURL)-1] == '/' {
+		return c.publicURL + key
+	}
+	return c.publicURL + "/" + key
 }
 
 // Upload uploads data to S3. contentLength must be > 0; S3-compatible backends (e.g. R2) require the Content-Length header.

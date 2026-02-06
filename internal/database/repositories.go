@@ -29,14 +29,14 @@ func NewJobRepository(db *DB) *JobRepository {
 func (r *JobRepository) Create(ctx context.Context, job *models.Job) error {
 	query := `
 		INSERT INTO jobs (
-			id, user_id, api_key_id, status, input_type, pictures_count, 
+			id, user_id, api_key_id, status, input_type, segments_count, 
 			audio_type, input_text, input_source, extracted_text, webhook_url, webhook_secret, created_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
 		job.ID, job.UserID, job.APIKeyID, job.Status, job.InputType,
-		job.PicturesCount, job.AudioType, job.InputText, job.InputSource, job.ExtractedText,
+		job.SegmentsCount, job.AudioType, job.InputText, job.InputSource, job.ExtractedText,
 		job.WebhookURL, job.WebhookSecret, job.CreatedAt,
 	)
 
@@ -46,7 +46,7 @@ func (r *JobRepository) Create(ctx context.Context, job *models.Job) error {
 // GetByID retrieves a job by ID
 func (r *JobRepository) GetByID(ctx context.Context, jobID uuid.UUID) (*models.Job, error) {
 	query := `
-		SELECT id, user_id, api_key_id, status, input_type, pictures_count,
+		SELECT id, user_id, api_key_id, status, input_type, segments_count,
 			audio_type, input_text, input_source, extracted_text, output_markup, webhook_url, webhook_secret,
 			error_code, error_message, created_at, started_at, finished_at
 		FROM jobs WHERE id = $1
@@ -55,7 +55,7 @@ func (r *JobRepository) GetByID(ctx context.Context, jobID uuid.UUID) (*models.J
 	job := &models.Job{}
 	err := r.db.QueryRowContext(ctx, query, jobID).Scan(
 		&job.ID, &job.UserID, &job.APIKeyID, &job.Status, &job.InputType,
-		&job.PicturesCount, &job.AudioType, &job.InputText, &job.InputSource, &job.ExtractedText,
+		&job.SegmentsCount, &job.AudioType, &job.InputText, &job.InputSource, &job.ExtractedText,
 		&job.OutputMarkup, &job.WebhookURL, &job.WebhookSecret, &job.ErrorCode, &job.ErrorMessage,
 		&job.CreatedAt, &job.StartedAt, &job.FinishedAt,
 	)
@@ -70,7 +70,7 @@ func (r *JobRepository) GetByID(ctx context.Context, jobID uuid.UUID) (*models.J
 // ListByUser retrieves jobs for a user with pagination
 func (r *JobRepository) ListByUser(ctx context.Context, userID uuid.UUID, limit int, cursor *time.Time) ([]*models.Job, error) {
 	query := `
-		SELECT id, user_id, api_key_id, status, input_type, pictures_count,
+		SELECT id, user_id, api_key_id, status, input_type, segments_count,
 			audio_type, input_text, input_source, extracted_text, output_markup, webhook_url, webhook_secret,
 			error_code, error_message, created_at, started_at, finished_at
 		FROM jobs 
@@ -90,7 +90,7 @@ func (r *JobRepository) ListByUser(ctx context.Context, userID uuid.UUID, limit 
 		job := &models.Job{}
 		err := rows.Scan(
 			&job.ID, &job.UserID, &job.APIKeyID, &job.Status, &job.InputType,
-			&job.PicturesCount, &job.AudioType, &job.InputText, &job.InputSource, &job.ExtractedText,
+			&job.SegmentsCount, &job.AudioType, &job.InputText, &job.InputSource, &job.ExtractedText,
 			&job.OutputMarkup, &job.WebhookURL, &job.WebhookSecret, &job.ErrorCode, &job.ErrorMessage,
 			&job.CreatedAt, &job.StartedAt, &job.FinishedAt,
 		)

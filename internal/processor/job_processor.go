@@ -202,7 +202,7 @@ func (p *JobProcessor) processJobPipeline(ctx context.Context, job *models.Job) 
 
 	// Step 1: Segment the text (includes extracted file content when input is files/mixed)
 	log.Info().Str("job_id", job.ID.String()).Msg("Step 1: Segmenting text")
-	segments, err := p.llmClient.SegmentText(ctx, textToSegment, job.PicturesCount, job.InputType)
+	segments, err := p.llmClient.SegmentText(ctx, textToSegment, job.SegmentsCount, job.InputType)
 	if err != nil {
 		return fmt.Errorf("segmentation failed: %w", err)
 	}

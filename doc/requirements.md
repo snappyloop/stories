@@ -10,7 +10,7 @@ Request JSON:
 
 * `text` (string, required)
 * `type` (enum: `educational|financial|fictional`, required)
-* `pictures_count` (int, required, min 1, max 20)
+* `segments_count` (int, required, min 1, max 20)
 * `audio_type` (enum: `free_speech|podcast`, required)
 * `webhook` (object, optional)
 
@@ -173,7 +173,7 @@ Retries:
 
 * Wrap LLM calls behind interfaces:
 
-  * `Segmenter.Segment(text, picturesCount, type) -> []Segment`
+  * `Segmenter.Segment(text, segmentsCount, type) -> []Segment`
   * `Narrator.MakeScript(segmentText, audioType, type) -> Script`
   * `Illustrator.MakePrompt(segmentText, type) -> Prompt`
   * `MediaGen.GenerateAudio(script, audioType) -> bytes/meta`
