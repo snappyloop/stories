@@ -333,7 +333,7 @@ components:
       type: object
       required:
         - type
-        - pictures_count
+        - segments_count
         - audio_type
       properties:
         text:
@@ -350,11 +350,11 @@ components:
           type: string
           enum: [educational, financial, fictional]
           description: Content type affecting style of narration and images
-        pictures_count:
+        segments_count:
           type: integer
           minimum: 1
           maximum: 20
-          description: Desired number of segments/images (configurable max, default 20)
+          description: Desired number of segments (configurable max, default 20)
         audio_type:
           type: string
           enum: [free_speech, podcast]
@@ -402,7 +402,7 @@ components:
         input_type:
           type: string
           enum: [educational, financial, fictional]
-        pictures_count:
+        segments_count:
           type: integer
         audio_type:
           type: string

@@ -98,7 +98,7 @@ Notes:
 * api_key_id (fk api_keys)
 * status (enum: queued/running/succeeded/failed/canceled)
 * input_type (enum: educational/financial/fictional)
-* pictures_count (int) — total desired
+* segments_count (int) — total desired
 * audio_type (enum: free_speech/podcast)
 * input_text (text) — consider storing raw text; optionally store in S3 and keep only pointer if you expect huge inputs
 * output_markup (text) — final marked-up text (or pointer)
@@ -170,7 +170,7 @@ Consumer groups:
 
 ### 6.1 Segmentation
 
-Input: full text, requested pictures_count (N), type
+Input: full text, requested segments_count (N), type
 
 Output:
 
@@ -258,7 +258,7 @@ Worker must be able to restart safely:
 * Hard limits:
 
   * max input length (e.g., 50k chars)
-  * max pictures_count (e.g., 20)
+  * max segments_count (e.g., 20)
 * Rate limiting per key (token bucket in memory + optional Redis later)
 
 ## 8) Observability

@@ -1,0 +1,103 @@
+{{define "index"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  {{template "gtag" .}}
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Great Stories — Tasks</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    section { margin-bottom: 1.5rem; }
+    label { display: block; margin-bottom: 0.25rem; font-weight: 500; }
+    input { padding: 0.5rem; margin-bottom: 0.75rem; border: 1px solid #ccc; border-radius: 4px; max-width: 360px; }
+    button { padding: 0.5rem 1rem; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #555; }
+    .index-api-section input { width: 100%; }
+    .index-api-hint { font-size: 0.8rem; color: #666; margin-top: 0.25rem; }
+    .tasks-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+    .tasks-table th, .tasks-table td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #e0e0e0; }
+    .tasks-table th { font-weight: 600; }
+    .tasks-table a { color: #333; }
+    .tasks-table .job-id-cell { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tasks-error { color: #c00; margin-top: 0.5rem; }
+    .tasks-empty { color: #666; margin-top: 1rem; }
+    .nav-link { margin-right: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Great Stories</h1>
+  <p><a href="/" class="nav-link">Tasks</a><a href="/generation" class="nav-link">Generation</a>{{.NavAgentsLink}}</p>
+
+  <section class="index-api-section">
+    <label for="index-api-key">API key</label>
+    <input type="password" id="index-api-key" placeholder="API key" autocomplete="off">
+    <button type="button" id="index-load-tasks">Load tasks</button>
+    <p class="index-api-hint">Email me to <a href="mailto:vasily.kulakov@gmail.com">vasily.kulakov@gmail.com</a> to get an API key.</p>
+    <p id="index-error" class="tasks-error" style="display:none;"></p>
+  </section>
+
+  <table id="index-tasks-table" class="tasks-table" style="display:none;">
+    <thead>
+      <tr><th>Job ID</th><th>Status</th><th>Type</th><th>Segments</th><th>Speech</th><th>Created</th><th></th></tr>
+    </thead>
+    <tbody id="index-tasks-body"></tbody>
+  </table>
+  <p id="index-tasks-empty" class="tasks-empty" style="display:none;">No tasks yet. Enter API key and click Load tasks, or <a href="/generation">create a new job</a>.</p>
+
+  <script>
+    function contractId(id) {
+      if (!id || id.length <= 12) return id;
+      return id.substring(0, 8) + '…' + id.substring(id.length - 4);
+    }
+    document.getElementById('index-load-tasks').addEventListener('click', async function() {
+      const apiKey = document.getElementById('index-api-key').value.trim();
+      const errorEl = document.getElementById('index-error');
+      const tableEl = document.getElementById('index-tasks-table');
+      const bodyEl = document.getElementById('index-tasks-body');
+      const emptyEl = document.getElementById('index-tasks-empty');
+      errorEl.style.display = 'none';
+      emptyEl.style.display = 'none';
+      if (!apiKey) {
+        errorEl.textContent = 'Please enter an API key.';
+        errorEl.style.display = 'block';
+        return;
+      }
+      try {
+        const res = await fetch('/v1/jobs', { headers: { 'Authorization': 'Bearer ' + apiKey } });
+        const data = await res.json();
+        if (!res.ok) {
+          errorEl.textContent = data.error || res.statusText || 'Failed to load tasks';
+          errorEl.style.display = 'block';
+          return;
+        }
+        const jobs = data.jobs || [];
+        bodyEl.innerHTML = '';
+        if (jobs.length === 0) {
+          emptyEl.style.display = 'block';
+          tableEl.style.display = 'none';
+        } else {
+          tableEl.style.display = 'table';
+          jobs.forEach(function(job) {
+            const tr = document.createElement('tr');
+            const id = job.id || job.job_id || '';
+            const shortId = contractId(id);
+            const status = job.status || '';
+            const type = job.input_type || '';
+            const segments = job.segments_count != null ? job.segments_count : '';
+            const speech = job.audio_type || '';
+            const created = job.created_at ? new Date(job.created_at).toLocaleString() : '';
+            tr.innerHTML = '<td class="job-id-cell" title="' + id.replace(/"/g, '&quot;') + '"><code style="font-size:0.85em">' + shortId + '</code></td><td>' + status + '</td><td>' + type + '</td><td>' + segments + '</td><td>' + speech + '</td><td>' + created + '</td><td><a href="/view/' + id + '">View</a></td>';
+            bodyEl.appendChild(tr);
+          });
+        }
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>
+{{end}}

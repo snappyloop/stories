@@ -124,7 +124,7 @@ func (s *JobService) CreateJob(ctx context.Context, req *models.CreateJobRequest
 		APIKeyID:      apiKeyID,
 		Status:        "queued",
 		InputType:     req.Type,
-		PicturesCount: req.PicturesCount,
+		SegmentsCount: req.SegmentsCount,
 		AudioType:     req.AudioType,
 		InputText:     inputText,
 		InputSource:   inputSource,
@@ -168,7 +168,7 @@ func (s *JobService) CreateJob(ctx context.Context, req *models.CreateJobRequest
 		Str("job_id", job.ID.String()).
 		Str("user_id", userID.String()).
 		Str("type", req.Type).
-		Int("pictures", req.PicturesCount).
+		Int("segments", req.SegmentsCount).
 		Msg("Job created")
 
 	return &models.CreateJobResponse{
@@ -351,8 +351,8 @@ func (s *JobService) validateCreateJobRequest(req *models.CreateJobRequest) erro
 		return fmt.Errorf("invalid type: must be educational, financial, or fictional")
 	}
 
-	if req.PicturesCount < 1 || req.PicturesCount > s.config.MaxPicturesCount {
-		return fmt.Errorf("pictures_count must be between 1 and %d", s.config.MaxPicturesCount)
+	if req.SegmentsCount < 1 || req.SegmentsCount > s.config.MaxSegmentsCount {
+		return fmt.Errorf("segments_count must be between 1 and %d", s.config.MaxSegmentsCount)
 	}
 
 	if req.AudioType != "free_speech" && req.AudioType != "podcast" {

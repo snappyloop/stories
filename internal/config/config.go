@@ -13,6 +13,14 @@ type Config struct {
 	LogLevel string
 	Timezone string
 
+	// Agents service (gRPC + MCP) — used by agents binary
+	GRPCAddr string
+	MCPAddr  string
+
+	// Agents service URLs — used by API to call agents (e.g. localhost:9090 or agents:9090)
+	AgentsGRPCURL string
+	AgentsMCPURL  string
+
 	// Database
 	DatabaseURL string
 
@@ -45,7 +53,7 @@ type Config struct {
 
 	// Processing
 	MaxInputLength        int
-	MaxPicturesCount      int
+	MaxSegmentsCount      int
 	MaxConcurrentSegments int
 
 	// File upload (multi-modal input)
@@ -77,6 +85,12 @@ func Load() *Config {
 		LogLevel: getEnv("LOG_LEVEL", "info"),
 		Timezone: getEnv("TZ", "UTC"),
 
+		GRPCAddr: getEnv("GRPC_ADDR", ":9090"),
+		MCPAddr:  getEnv("MCP_ADDR", ":9091"),
+
+		AgentsGRPCURL: getEnv("AGENTS_GRPC_URL", ""),
+		AgentsMCPURL:  getEnv("AGENTS_MCP_URL", ""),
+
 		DatabaseURL: getEnv("DATABASE_URL", ""),
 
 		KafkaBrokers:       []string{getEnv("KAFKA_BROKERS", "localhost:9092")},
@@ -104,7 +118,7 @@ func Load() *Config {
 		GeminiModelSegmentFallback: getEnv("GEMINI_MODEL_SEGMENT_FALLBACK", "gemini-2.5-flash-lite"),
 
 		MaxInputLength:        getEnvInt("MAX_INPUT_LENGTH", 50000),
-		MaxPicturesCount:      getEnvInt("MAX_PICTURES_COUNT", 20),
+		MaxSegmentsCount:      getEnvInt("MAX_SEGMENTS_COUNT", 20),
 		MaxConcurrentSegments: clampMin(getEnvInt("MAX_CONCURRENT_SEGMENTS", 5), 1),
 
 		MaxFileSize:       getEnvInt64("MAX_FILE_SIZE", 10*1024*1024), // 10MB

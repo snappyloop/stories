@@ -38,11 +38,11 @@ llmClient := llm.NewClient(
 
 ### 1. Intelligent Text Segmentation ✅
 
-**Function:** `SegmentText(ctx, text, picturesCount, inputType)`
+**Function:** `SegmentText(ctx, text, segmentsCount, inputType)`
 
 **What it does:**
 - Analyzes full text using Gemini
-- Segments into exactly `picturesCount` logical parts
+- Segments into exactly `segmentsCount` logical parts
 - Breaks at natural boundaries (paragraphs, sentences)
 - Generates descriptive titles for each segment
 - Returns structured JSON with character positions
@@ -168,13 +168,13 @@ Every LLM call has a fallback:
 
 ```go
 if c.llmPro == nil {
-    return c.fallbackSegmentation(text, picturesCount)
+    return c.fallbackSegmentation(text, segmentsCount)
 }
 
 response, err := llms.GenerateFromSinglePrompt(ctx, c.llmPro, prompt)
 if err != nil {
     log.Error().Err(err).Msg("Gemini failed, using fallback")
-    return c.fallbackSegmentation(text, picturesCount)
+    return c.fallbackSegmentation(text, segmentsCount)
 }
 ```
 
@@ -335,7 +335,7 @@ curl -X POST http://localhost:8080/v1/jobs \
   -d '{
     "text": "Your text here...",
     "type": "educational",
-    "pictures_count": 3,
+    "segments_count": 3,
     "audio_type": "free_speech"
   }'
 ```

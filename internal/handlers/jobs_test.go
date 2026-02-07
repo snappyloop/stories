@@ -57,10 +57,10 @@ func TestCreateJob_Unauthorized(t *testing.T) {
 	h := NewHandler(
 		&fakeJobService{},
 		nil, nil, nil, nil,
-		100000, "monthly", 20,
+		100000, "monthly", 20, nil, "", "",
 	)
 
-	body := bytes.NewBufferString(`{"text":"Hi","type":"educational","pictures_count":2,"audio_type":"free_speech"}`)
+	body := bytes.NewBufferString(`{"text":"Hi","type":"educational","segments_count":2,"audio_type":"free_speech"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/jobs", body)
 	req.Header.Set("Content-Type", "application/json")
 	// Do not add auth to context
@@ -81,7 +81,7 @@ func TestCreateJob_InvalidBody(t *testing.T) {
 	h := NewHandler(
 		&fakeJobService{},
 		nil, nil, nil, nil,
-		100000, "monthly", 20,
+		100000, "monthly", 20, nil, "", "",
 	)
 
 	body := bytes.NewBufferString(`{invalid json`)
@@ -111,10 +111,10 @@ func TestCreateJob_ValidationErrorFromService(t *testing.T) {
 			},
 		},
 		nil, nil, nil, nil,
-		100000, "monthly", 20,
+		100000, "monthly", 20, nil, "", "",
 	)
 
-	body := bytes.NewBufferString(`{"type":"educational","pictures_count":2,"audio_type":"free_speech"}`)
+	body := bytes.NewBufferString(`{"type":"educational","segments_count":2,"audio_type":"free_speech"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/jobs", body)
 	req.Header.Set("Content-Type", "application/json")
 	ctx := context.WithValue(req.Context(), auth.UserIDKey, userID)
@@ -142,10 +142,10 @@ func TestCreateJob_Success(t *testing.T) {
 			},
 		},
 		nil, nil, nil, nil,
-		100000, "monthly", 20,
+		100000, "monthly", 20, nil, "", "",
 	)
 
-	body := bytes.NewBufferString(`{"text":"Hello","type":"educational","pictures_count":2,"audio_type":"free_speech"}`)
+	body := bytes.NewBufferString(`{"text":"Hello","type":"educational","segments_count":2,"audio_type":"free_speech"}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/jobs", body)
 	req.Header.Set("Content-Type", "application/json")
 	ctx := context.WithValue(req.Context(), auth.UserIDKey, userID)
@@ -173,7 +173,7 @@ func TestCreateJob_Success(t *testing.T) {
 // TestGetJob_InvalidID asserts 400 for invalid job UUID.
 func TestGetJob_InvalidID(t *testing.T) {
 	userID := uuid.New()
-	h := NewHandler(&fakeJobService{}, nil, nil, nil, nil, 100000, "monthly", 20)
+	h := NewHandler(&fakeJobService{}, nil, nil, nil, nil, 100000, "monthly", 20, nil, "", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/jobs/not-a-uuid", nil)
 	req = mux.SetURLVars(req, map[string]string{"id": "not-a-uuid"})

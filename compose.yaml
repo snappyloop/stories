@@ -70,6 +70,29 @@ services:
         reservations:
           memory: 64M
 
+  # Agents Service (gRPC + MCP, optional - deploy to enable synchronous agent access)
+  agents:
+    build: .
+    container_name: stories-agents
+    restart: unless-stopped
+    command: ["./stories-agents"]
+    env_file:
+      - .env
+    ports:
+      - "9090:9090"
+      - "9091:9091"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - stories-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
   # PostgreSQL
   postgres:
     image: postgres:16-alpine

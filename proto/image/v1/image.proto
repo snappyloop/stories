@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package image.v1;
+
+option go_package = "github.com/snappy-loop/stories/gen/image/v1;imagev1";
+
+service ImageService {
+  rpc GenerateImagePrompt(GenerateImagePromptRequest) returns (GenerateImagePromptResponse);
+  rpc GenerateImage(GenerateImageRequest) returns (GenerateImageResponse);
+}
+
+message GenerateImagePromptRequest {
+  string text = 1;
+  string input_type = 2;
+}
+
+message GenerateImagePromptResponse {
+  string prompt = 1;
+}
+
+message GenerateImageRequest {
+  string prompt = 1;
+}
+
+message GenerateImageResponse {
+  bytes data = 1;
+  int64 size = 2;
+  string resolution = 3;
+  string mime_type = 4;
+  string model = 5;
+  string url = 6;  // when set, image is served from this URL instead of inline data
+}

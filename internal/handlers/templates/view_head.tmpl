@@ -1,0 +1,23 @@
+{{define "view_head"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  {{template "gtag" .}}
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Job view</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+    .segment { margin-bottom: 2rem; padding-bottom: 2rem; border-bottom: 1px solid #eee; }
+    .segment:last-child { border-bottom: none; }
+    .segment audio { display: block; margin-bottom: 0.75rem; width: 100%; }
+    .segment-text { margin: 0.75rem 0; line-height: 1.5; white-space: pre-wrap; }
+    .segment-image { display: block; max-width: 100%; height: auto; margin-top: 0.75rem; border-radius: 6px; }
+    .segment-title { font-size: 1.1rem; margin: 0.5rem 0 0.25rem; }
+    .source { margin-bottom: 2rem; padding: 1rem; background: #f8f8f8; border-radius: 6px; border-left: 4px solid #ccc; }
+    .source h3 { font-size: 0.95rem; margin: 0 0 0.5rem; color: #555; }
+    .source-content { margin: 0; font-size: 0.9rem; white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body>
+{{end}}

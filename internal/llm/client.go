@@ -254,14 +254,14 @@ type Image struct {
 
 // SegmentText segments text into logical parts.
 // Uses 3.0 flash first, then 2.5 flash; if both fail or return no valid response, returns one segment (whole text).
-func (c *Client) SegmentText(ctx context.Context, text string, picturesCount int, inputType string) ([]*Segment, error) {
+func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int, inputType string) ([]*Segment, error) {
 	log.Info().
-		Int("pictures_count", picturesCount).
+		Int("segments_count", segmentsCount).
 		Str("type", inputType).
 		Int("text_length", len(text)).
 		Msg("Segmenting text")
 
-	prompt := c.buildSegmentPrompt(text, picturesCount, inputType)
+	prompt := c.buildSegmentPrompt(text, segmentsCount, inputType)
 
 	// Log segmentation request input
 	if len(prompt) <= maxSegmentInputLogBytes {
@@ -306,7 +306,7 @@ func (c *Client) SegmentText(ctx context.Context, text string, picturesCount int
 }
 
 // buildSegmentPrompt builds the segmentation prompt with structured response instructions.
-func (c *Client) buildSegmentPrompt(text string, picturesCount int, inputType string) string {
+func (c *Client) buildSegmentPrompt(text string, segmentsCount int, inputType string) string {
 	var styleGuidance string
 	switch inputType {
 	case "educational":
@@ -335,7 +335,7 @@ Example valid response:
 {"segments":[{"start_char":0,"end_char":150,"title":"Introduction"},{"start_char":150,"end_char":350,"title":"Main Point"}]}
 
 TEXT TO SEGMENT:
-%s`, picturesCount, styleGuidance, text)
+%s`, segmentsCount, styleGuidance, text)
 }
 
 // extractTextFromGenaiResponse returns the concatenated text from the first candidate's parts.
