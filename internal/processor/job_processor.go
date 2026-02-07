@@ -429,7 +429,7 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 		factCheckText, err := p.llmClient.FactCheckSegment(ctx, seg.Text)
 		if err != nil {
 			log.Warn().Err(err).Str("job_id", job.ID.String()).Int("segment", idx).Msg("Fact-check failed, skipping for segment")
-		} else {
+		} else if factCheckText != "" {
 			fc := &models.SegmentFactCheck{
 				ID:            uuid.New(),
 				SegmentID:     segmentID,

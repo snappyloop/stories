@@ -8,7 +8,6 @@ import (
 	"html/template"
 	"io"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -75,7 +74,7 @@ func NewHandler(
 		maxSegmentsCount:   maxSegmentsCount,
 		agentsClient:       agentsClient,
 		agentsGRPCURL:      agentsGRPCURL,
-		agentsMCPURL:      agentsMCPURL,
+		agentsMCPURL:       agentsMCPURL,
 	}
 }
 
@@ -322,7 +321,9 @@ func (h *Handler) GetAssetContent(w http.ResponseWriter, r *http.Request) {
 }
 
 // injectFactChecksIntoHTML inserts fact-check divs into segment divs. For each non-empty fact-check,
-// finds the segment div with matching data-segment-id and appends a .fact-check div before its closing tag.
+// finds the segment div with matching data-segment-id and appends a .fact-check div before its
+// outermost closing </div>. Uses string search instead of regex so that nested divs inside the
+// segment are handled correctly.
 func injectFactChecksIntoHTML(bodyHTML string, factChecks []*models.SegmentFactCheck) string {
 	if len(factChecks) == 0 {
 		return bodyHTML
@@ -331,19 +332,43 @@ func injectFactChecksIntoHTML(bodyHTML string, factChecks []*models.SegmentFactC
 		if fc.FactCheckText == "" {
 			continue
 		}
-		segID := fc.SegmentID.String()
-		// Match segment div and its content; insert fact-check div before closing </div>
-		pat := `(?s)(<div class="segment" data-segment-id="` + regexp.QuoteMeta(segID) + `">)(.*?)(</div>)`
-		re, err := regexp.Compile(pat)
-		if err != nil {
+		// Locate the opening tag for this segment.
+		openTag := `<div class="segment" data-segment-id="` + fc.SegmentID.String() + `">`
+		openIdx := strings.Index(bodyHTML, openTag)
+		if openIdx < 0 {
+			continue
+		}
+		afterOpen := openIdx + len(openTag)
+
+		// Walk the HTML after the opening tag and count nested divs to find the
+		// matching closing </div> for this segment.
+		depth := 1
+		pos := afterOpen
+		closeIdx := -1
+		for depth > 0 && pos < len(bodyHTML) {
+			// Find the next div-related tag (opening or closing).
+			nextOpen := strings.Index(bodyHTML[pos:], "<div")
+			nextClose := strings.Index(bodyHTML[pos:], "</div>")
+			if nextClose < 0 {
+				break // malformed HTML, bail out
+			}
+			if nextOpen >= 0 && nextOpen < nextClose {
+				depth++
+				pos += nextOpen + 4 // skip past "<div"
+			} else {
+				depth--
+				if depth == 0 {
+					closeIdx = pos + nextClose
+				}
+				pos += nextClose + 6 // skip past "</div>"
+			}
+		}
+		if closeIdx < 0 {
 			continue
 		}
 		escaped := html.EscapeString(fc.FactCheckText)
 		insert := `<div class="fact-check">` + escaped + `</div>`
-		bodyHTML = re.ReplaceAllStringFunc(bodyHTML, func(match string) string {
-			groups := re.FindStringSubmatch(match)
-			return groups[1] + groups[2] + insert + groups[3]
-		})
+		bodyHTML = bodyHTML[:closeIdx] + insert + bodyHTML[closeIdx:]
 	}
 	return bodyHTML
 }
@@ -491,4 +516,3 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
-
