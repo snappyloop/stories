@@ -13,6 +13,8 @@
     section h2 { font-size: 1.1rem; margin-top: 0; margin-bottom: 1rem; }
     label { display: block; margin-bottom: 0.25rem; font-weight: 500; }
     input, textarea, select { width: 100%; padding: 0.5rem; margin-bottom: 0.75rem; border: 1px solid #ccc; border-radius: 4px; }
+    input[type="checkbox"] { width: auto; margin-bottom: 0; }
+    label.checkbox-row { display: inline-block; margin-bottom: 0.75rem; }
     textarea { min-height: 80px; resize: vertical; }
     button { padding: 0.5rem 1rem; background: #333; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
     button:hover { background: #555; }
@@ -55,6 +57,7 @@
   "type": "educational | financial | fictional",
   "segments_count": "integer (1–max from config)",
   "audio_type": "free_speech | podcast",
+  "fact_check_needed": "boolean (optional, default false)",
   "webhook": { "url": "string (optional)", "secret": "string (optional)" }
 }</pre>
       <p><strong>POST /v1/files</strong> — Upload a file (multipart form, field <code>file</code>). Returns <code>file_id</code>. Use these IDs in <code>file_ids</code> when creating a job.</p>
@@ -97,7 +100,8 @@
         <option value="free_speech">Free speech</option>
         <option value="podcast">Podcast</option>
       </select>
-      <button type="submit" id="send-test-btn">Send request</button>
+      <label class="checkbox-row"><input type="checkbox" id="fact_check_needed" name="fact_check_needed"> Fact-check segments</label>
+      <br><button type="submit" id="send-test-btn">Send request</button>
     </form>
     <div id="test-request-result" class="result" style="display:none;"></div>
   </section>
@@ -215,7 +219,8 @@
       var payload = {
         type: document.getElementById('type').value,
         segments_count: segmentsCount,
-        audio_type: document.getElementById('audio_type').value
+        audio_type: document.getElementById('audio_type').value,
+        fact_check_needed: document.getElementById('fact_check_needed').checked
       };
       if (text) payload.text = text;
       if (fileIds.length > 0) payload.file_ids = fileIds;

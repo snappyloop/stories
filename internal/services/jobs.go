@@ -15,14 +15,15 @@ import (
 
 // JobService handles job-related business logic
 type JobService struct {
-	jobRepo       jobRepository
-	segmentRepo   segmentRepository
-	assetRepo     assetRepository
-	jobFileRepo   jobFileRepository
-	fileRepo      fileRepository
-	apiKeyRepo    apiKeyRepository
-	jobPublisher  JobPublisher
-	config        *config.Config
+	jobRepo        jobRepository
+	segmentRepo    segmentRepository
+	assetRepo      assetRepository
+	jobFileRepo    jobFileRepository
+	fileRepo       fileRepository
+	factCheckRepo  factCheckRepository
+	apiKeyRepo     apiKeyRepository
+	jobPublisher   JobPublisher
+	config         *config.Config
 }
 
 // NewJobService creates a new JobService from repository and publisher interfaces (for production or testing).
@@ -32,19 +33,21 @@ func NewJobService(
 	assetRepo assetRepository,
 	jobFileRepo jobFileRepository,
 	fileRepo fileRepository,
+	factCheckRepo factCheckRepository,
 	apiKeyRepo apiKeyRepository,
 	jobPublisher JobPublisher,
 	cfg *config.Config,
 ) *JobService {
 	return &JobService{
-		jobRepo:      jobRepo,
-		segmentRepo:  segmentRepo,
-		assetRepo:    assetRepo,
-		jobFileRepo:  jobFileRepo,
-		fileRepo:     fileRepo,
-		apiKeyRepo:   apiKeyRepo,
-		jobPublisher: jobPublisher,
-		config:       cfg,
+		jobRepo:       jobRepo,
+		segmentRepo:   segmentRepo,
+		assetRepo:     assetRepo,
+		jobFileRepo:   jobFileRepo,
+		fileRepo:      fileRepo,
+		factCheckRepo: factCheckRepo,
+		apiKeyRepo:    apiKeyRepo,
+		jobPublisher:  jobPublisher,
+		config:        cfg,
 	}
 }
 
@@ -64,6 +67,7 @@ func NewJobServiceFromDB(
 		database.NewAssetRepository(db),
 		database.NewJobFileRepository(db),
 		database.NewFileRepository(db),
+		database.NewFactCheckRepository(db),
 		database.NewAPIKeyRepository(db),
 		publisher,
 		cfg,
@@ -118,17 +122,22 @@ func (s *JobService) CreateJob(ctx context.Context, req *models.CreateJobRequest
 		Msg("Creating job")
 
 	// Create job
+	factCheckNeeded := false
+	if req.FactCheckNeeded != nil {
+		factCheckNeeded = *req.FactCheckNeeded
+	}
 	job := &models.Job{
-		ID:            uuid.New(),
-		UserID:        userID,
-		APIKeyID:      apiKeyID,
-		Status:        "queued",
-		InputType:     req.Type,
-		SegmentsCount: req.SegmentsCount,
-		AudioType:     req.AudioType,
-		InputText:     inputText,
-		InputSource:   inputSource,
-		CreatedAt:     time.Now(),
+		ID:              uuid.New(),
+		UserID:          userID,
+		APIKeyID:        apiKeyID,
+		Status:          "queued",
+		InputType:       req.Type,
+		SegmentsCount:   req.SegmentsCount,
+		AudioType:       req.AudioType,
+		InputText:       inputText,
+		InputSource:     inputSource,
+		FactCheckNeeded: factCheckNeeded,
+		CreatedAt:       time.Now(),
 	}
 
 	if req.Webhook != nil {
@@ -209,11 +218,18 @@ func (s *JobService) GetJob(ctx context.Context, jobID, userID uuid.UUID) (*mode
 	}
 	filesResp := s.buildJobFileResponses(ctx, jobFiles)
 
+	// Get fact-checks for job
+	var factChecks []*models.SegmentFactCheck
+	if s.factCheckRepo != nil {
+		factChecks, _ = s.factCheckRepo.ListByJob(ctx, jobID)
+	}
+
 	return &models.JobStatusResponse{
-		Job:      *job,
-		Segments: segments,
-		Assets:   s.buildAssetResponses(assets),
-		Files:    filesResp,
+		Job:        *job,
+		Segments:   segments,
+		Assets:     s.buildAssetResponses(assets),
+		Files:      filesResp,
+		FactChecks: factChecks,
 	}, nil
 }
 
@@ -253,11 +269,16 @@ func (s *JobService) GetJobByID(ctx context.Context, jobID uuid.UUID) (*models.J
 	}
 	jobFiles, _ := s.jobFileRepo.ListByJob(ctx, jobID)
 	filesResp := s.buildJobFileResponses(ctx, jobFiles)
+	var factChecks []*models.SegmentFactCheck
+	if s.factCheckRepo != nil {
+		factChecks, _ = s.factCheckRepo.ListByJob(ctx, jobID)
+	}
 	return &models.JobStatusResponse{
-		Job:      *job,
-		Segments: segments,
-		Assets:   s.buildAssetResponses(assets),
-		Files:    filesResp,
+		Job:        *job,
+		Segments:   segments,
+		Assets:     s.buildAssetResponses(assets),
+		Files:      filesResp,
+		FactChecks: factChecks,
 	}, nil
 }
 

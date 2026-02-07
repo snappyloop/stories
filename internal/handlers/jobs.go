@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -320,6 +321,30 @@ func (h *Handler) GetAssetContent(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// injectFactChecksIntoHTML inserts fact-check divs into segment divs. For each non-empty fact-check,
+// finds the segment div with matching data-segment-id and appends a .fact-check div before its closing tag.
+func injectFactChecksIntoHTML(bodyHTML string, factChecks []*models.SegmentFactCheck) string {
+	if len(factChecks) == 0 {
+		return bodyHTML
+	}
+	for _, fc := range factChecks {
+		if fc.FactCheckText == "" {
+			continue
+		}
+		segID := fc.SegmentID.String()
+		// Match segment div and its content; insert fact-check div before closing </div>
+		pat := `(?s)(<div class="segment" data-segment-id="` + regexp.QuoteMeta(segID) + `">)(.*?)(</div>)`
+		re, err := regexp.Compile(pat)
+		if err != nil {
+			continue
+		}
+		escaped := html.EscapeString(fc.FactCheckText)
+		insert := `<div class="fact-check">` + escaped + `</div>`
+		bodyHTML = re.ReplaceAllString(bodyHTML, "$1$2"+insert+"$3")
+	}
+	return bodyHTML
+}
+
 // viewJobFallbackHTML builds HTML from segments and assets when job has no output_markup (e.g. legacy jobs).
 func viewJobFallbackHTML(resp *models.JobStatusResponse, jobIDStr string) string {
 	type segmentAssets struct {
@@ -350,7 +375,9 @@ func viewJobFallbackHTML(resp *models.JobStatusResponse, jobIDStr string) string
 	var b strings.Builder
 	for _, seg := range resp.Segments {
 		sa := bySegment[seg.ID]
-		b.WriteString(`<div class="segment">`)
+		b.WriteString(`<div class="segment" data-segment-id="`)
+		b.WriteString(seg.ID.String())
+		b.WriteString(`">`)
 		if sa != nil && sa.audio != nil {
 			b.WriteString(fmt.Sprintf(`<audio controls preload="metadata" src="/view/asset/%s?job_id=%s"></audio>`, sa.audio.Asset.ID.String(), jobIDStr))
 		}
@@ -389,6 +416,7 @@ func (h *Handler) ViewJob(w http.ResponseWriter, r *http.Request) {
 		// Fallback: build from segments when no markup (e.g. old jobs)
 		bodyHTML = viewJobFallbackHTML(resp, jobIDStr)
 	}
+	bodyHTML = injectFactChecksIntoHTML(bodyHTML, resp.FactChecks)
 
 	var b []byte
 	b = append(b, viewHeadBytes...)

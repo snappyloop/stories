@@ -39,13 +39,14 @@ type Job struct {
 	InputSource   string     `json:"input_source"`   // text, files, mixed
 	ExtractedText *string    `json:"extracted_text,omitempty"`
 	OutputMarkup  *string    `json:"output_markup,omitempty"`
-	WebhookURL    *string    `json:"webhook_url,omitempty"`
-	WebhookSecret *string    `json:"webhook_secret,omitempty"`
-	ErrorCode     *string    `json:"error_code,omitempty"`
-	ErrorMessage  *string    `json:"error_message,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
-	StartedAt     *time.Time `json:"started_at,omitempty"`
-	FinishedAt    *time.Time `json:"finished_at,omitempty"`
+	WebhookURL     *string    `json:"webhook_url,omitempty"`
+	WebhookSecret  *string    `json:"webhook_secret,omitempty"`
+	FactCheckNeeded bool      `json:"fact_check_needed"`
+	ErrorCode      *string   `json:"error_code,omitempty"`
+	ErrorMessage   *string   `json:"error_message,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
 }
 
 // File represents an uploaded file available for job processing
@@ -96,6 +97,15 @@ type JobFile struct {
 	ExtractedText   *string    `json:"extracted_text,omitempty"`
 	Status          string     `json:"status"` // pending, processing, succeeded, failed
 	CreatedAt       time.Time  `json:"created_at"`
+}
+
+// SegmentFactCheck holds fact-check output for a segment (up to 512 chars).
+type SegmentFactCheck struct {
+	ID            uuid.UUID `json:"id"`
+	SegmentID     uuid.UUID `json:"segment_id"`
+	JobID         uuid.UUID `json:"job_id"`
+	FactCheckText string    `json:"fact_check_text"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // Segment represents a text segment within a job
@@ -168,12 +178,13 @@ type WebhookDelivery struct {
 
 // CreateJobRequest represents a request to create a new job
 type CreateJobRequest struct {
-	Text          string         `json:"text,omitempty"`
-	FileIDs       []uuid.UUID    `json:"file_ids,omitempty"`
-	Type          string         `json:"type"` // educational, financial, fictional
-	SegmentsCount int            `json:"segments_count"`
-	AudioType     string         `json:"audio_type"` // free_speech, podcast
-	Webhook       *WebhookConfig `json:"webhook,omitempty"`
+	Text            string         `json:"text,omitempty"`
+	FileIDs         []uuid.UUID    `json:"file_ids,omitempty"`
+	Type            string         `json:"type"` // educational, financial, fictional
+	SegmentsCount   int            `json:"segments_count"`
+	AudioType       string         `json:"audio_type"` // free_speech, podcast
+	FactCheckNeeded *bool          `json:"fact_check_needed,omitempty"`
+	Webhook         *WebhookConfig `json:"webhook,omitempty"`
 }
 
 // WebhookConfig represents webhook configuration for a job
@@ -209,10 +220,11 @@ type JobFileResponse struct {
 
 // JobStatusResponse represents detailed job status
 type JobStatusResponse struct {
-	Job      Job                `json:"job"`
-	Segments []*Segment         `json:"segments"`
-	Assets   []*AssetResponse   `json:"assets"`
-	Files    []*JobFileResponse `json:"files"`
+	Job       Job                  `json:"job"`
+	Segments  []*Segment           `json:"segments"`
+	Assets    []*AssetResponse     `json:"assets"`
+	Files     []*JobFileResponse   `json:"files"`
+	FactChecks []*SegmentFactCheck `json:"fact_checks,omitempty"`
 }
 
 // AssetResponse represents asset metadata with download URL (S3 fields excluded)

@@ -100,6 +100,7 @@ func main() {
 	// Input processors for multi-modal support
 	fileRepo := database.NewFileRepository(db)
 	jobFileRepo := database.NewJobFileRepository(db)
+	factCheckRepo := database.NewFactCheckRepository(db)
 	multiFileProcessor := processor.NewMultiFileProcessor(llmClient, storageClient, fileRepo, jobFileRepo)
 	inputRegistry := processor.NewInputProcessorRegistry(
 		processor.NewTextProcessor(),
@@ -116,6 +117,7 @@ func main() {
 		inputRegistry,
 		jobFileRepo,
 		fileRepo,
+		factCheckRepo,
 	)
 
 	// Create job handler

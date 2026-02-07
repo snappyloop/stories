@@ -30,14 +30,14 @@ func (r *JobRepository) Create(ctx context.Context, job *models.Job) error {
 	query := `
 		INSERT INTO jobs (
 			id, user_id, api_key_id, status, input_type, segments_count, 
-			audio_type, input_text, input_source, extracted_text, webhook_url, webhook_secret, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			audio_type, input_text, input_source, extracted_text, webhook_url, webhook_secret, fact_check_needed, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 	`
 
 	_, err := r.db.ExecContext(ctx, query,
 		job.ID, job.UserID, job.APIKeyID, job.Status, job.InputType,
 		job.SegmentsCount, job.AudioType, job.InputText, job.InputSource, job.ExtractedText,
-		job.WebhookURL, job.WebhookSecret, job.CreatedAt,
+		job.WebhookURL, job.WebhookSecret, job.FactCheckNeeded, job.CreatedAt,
 	)
 
 	return err
@@ -48,7 +48,7 @@ func (r *JobRepository) GetByID(ctx context.Context, jobID uuid.UUID) (*models.J
 	query := `
 		SELECT id, user_id, api_key_id, status, input_type, segments_count,
 			audio_type, input_text, input_source, extracted_text, output_markup, webhook_url, webhook_secret,
-			error_code, error_message, created_at, started_at, finished_at
+			fact_check_needed, error_code, error_message, created_at, started_at, finished_at
 		FROM jobs WHERE id = $1
 	`
 
@@ -56,8 +56,8 @@ func (r *JobRepository) GetByID(ctx context.Context, jobID uuid.UUID) (*models.J
 	err := r.db.QueryRowContext(ctx, query, jobID).Scan(
 		&job.ID, &job.UserID, &job.APIKeyID, &job.Status, &job.InputType,
 		&job.SegmentsCount, &job.AudioType, &job.InputText, &job.InputSource, &job.ExtractedText,
-		&job.OutputMarkup, &job.WebhookURL, &job.WebhookSecret, &job.ErrorCode, &job.ErrorMessage,
-		&job.CreatedAt, &job.StartedAt, &job.FinishedAt,
+		&job.OutputMarkup, &job.WebhookURL, &job.WebhookSecret, &job.FactCheckNeeded,
+		&job.ErrorCode, &job.ErrorMessage, &job.CreatedAt, &job.StartedAt, &job.FinishedAt,
 	)
 
 	if err == sql.ErrNoRows {
@@ -72,7 +72,7 @@ func (r *JobRepository) ListByUser(ctx context.Context, userID uuid.UUID, limit 
 	query := `
 		SELECT id, user_id, api_key_id, status, input_type, segments_count,
 			audio_type, input_text, input_source, extracted_text, output_markup, webhook_url, webhook_secret,
-			error_code, error_message, created_at, started_at, finished_at
+			fact_check_needed, error_code, error_message, created_at, started_at, finished_at
 		FROM jobs 
 		WHERE user_id = $1 AND ($2::timestamptz IS NULL OR created_at < $2)
 		ORDER BY created_at DESC
@@ -91,8 +91,8 @@ func (r *JobRepository) ListByUser(ctx context.Context, userID uuid.UUID, limit 
 		err := rows.Scan(
 			&job.ID, &job.UserID, &job.APIKeyID, &job.Status, &job.InputType,
 			&job.SegmentsCount, &job.AudioType, &job.InputText, &job.InputSource, &job.ExtractedText,
-			&job.OutputMarkup, &job.WebhookURL, &job.WebhookSecret, &job.ErrorCode, &job.ErrorMessage,
-			&job.CreatedAt, &job.StartedAt, &job.FinishedAt,
+			&job.OutputMarkup, &job.WebhookURL, &job.WebhookSecret, &job.FactCheckNeeded,
+			&job.ErrorCode, &job.ErrorMessage, &job.CreatedAt, &job.StartedAt, &job.FinishedAt,
 		)
 		if err != nil {
 			return nil, err

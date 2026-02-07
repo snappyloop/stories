@@ -96,6 +96,13 @@ func (fakeAssetRepo) GetByID(context.Context, uuid.UUID) (*models.Asset, error) 
 	return nil, errNotFound
 }
 
+// fakeFactCheckRepo returns empty fact-checks for tests.
+type fakeFactCheckRepo struct{}
+
+func (fakeFactCheckRepo) ListByJob(context.Context, uuid.UUID) ([]*models.SegmentFactCheck, error) {
+	return nil, nil
+}
+
 // fakeJobFileRepo does nothing for Create; ListByJob returns empty.
 type fakeJobFileRepo struct{}
 
@@ -181,6 +188,7 @@ func TestCreateJob_ValidationErrors(t *testing.T) {
 		fakeAssetRepo{},
 		fakeJobFileRepo{},
 		newFakeFileRepo(),
+		fakeFactCheckRepo{},
 		newFakeAPIKeyRepo(apiKey),
 		noopJobPublisher{},
 		cfg,
@@ -243,6 +251,7 @@ func TestCreateJob_Success(t *testing.T) {
 		fakeAssetRepo{},
 		fakeJobFileRepo{},
 		newFakeFileRepo(),
+		fakeFactCheckRepo{},
 		newFakeAPIKeyRepo(apiKey),
 		noopJobPublisher{},
 		cfg,
@@ -311,6 +320,7 @@ func TestGetJob_AccessDenied(t *testing.T) {
 		fakeAssetRepo{},
 		fakeJobFileRepo{},
 		newFakeFileRepo(),
+		fakeFactCheckRepo{},
 		newFakeAPIKeyRepo(nil),
 		noopJobPublisher{},
 		config.Load(),
@@ -335,6 +345,7 @@ func TestListJobs_LimitClamping(t *testing.T) {
 		fakeAssetRepo{},
 		fakeJobFileRepo{},
 		newFakeFileRepo(),
+		fakeFactCheckRepo{},
 		newFakeAPIKeyRepo(nil),
 		noopJobPublisher{},
 		config.Load(),
