@@ -17,7 +17,9 @@ import (
 
 	"github.com/google/generative-ai-go/genai"
 	"github.com/google/uuid"
+	"github.com/rivo/uniseg"
 	"github.com/rs/zerolog/log"
+	"github.com/snappy-loop/stories/internal/database"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/googleai"
 	"google.golang.org/api/option"
@@ -84,16 +86,18 @@ type Client struct {
 	modelSegmentFallback string // e.g. gemini-2.5-flash-lite
 	llmFlash             llms.Model
 	llmPro               llms.Model
-	llmSegmentPrimary    llms.Model           // primary for segmentation
-	llmSegmentFallback   llms.Model           // fallback for segmentation
-	genaiClient          *genai.Client        // for image modality and segment schema
-	unifiedClient        *unifiedgenai.Client // unified genai SDK for TTS
+	llmSegmentPrimary    llms.Model                       // primary for segmentation
+	llmSegmentFallback   llms.Model                       // fallback for segmentation
+	genaiClient          *genai.Client                    // for image modality and segment schema
+	unifiedClient        *unifiedgenai.Client             // unified genai SDK for TTS
+	boundaryCache        *database.BoundaryCacheRepository // cache for segmentation boundaries
 }
 
 // NewClient creates a new LLM client.
 // apiEndpoint: optional Gemini API base URL (e.g. http://host.docker.internal:31300/gemini); when set, all Gemini calls use this endpoint.
 // modelSegmentPrimary/modelSegmentFallback: models for segmentation (e.g. gemini-3.0-flash, gemini-2.5-flash-lite).
-func NewClient(apiKey, modelFlash, modelPro, modelImage, modelTTS, ttsVoice, apiEndpoint, modelSegmentPrimary, modelSegmentFallback string) *Client {
+// boundaryCache: optional repository for caching segmentation boundaries; if nil, caching is disabled.
+func NewClient(apiKey, modelFlash, modelPro, modelImage, modelTTS, ttsVoice, apiEndpoint, modelSegmentPrimary, modelSegmentFallback string, boundaryCache *database.BoundaryCacheRepository) *Client {
 	if modelImage == "" {
 		modelImage = "gemini-3-pro-image-preview"
 	}
@@ -104,7 +108,7 @@ func NewClient(apiKey, modelFlash, modelPro, modelImage, modelTTS, ttsVoice, api
 		ttsVoice = "Zephyr"
 	}
 	if modelSegmentPrimary == "" {
-		modelSegmentPrimary = "gemini-3.0-flash"
+		modelSegmentPrimary = "gemini-3-flash-preview"
 	}
 	if modelSegmentFallback == "" {
 		modelSegmentFallback = "gemini-2.5-flash-lite"
@@ -210,6 +214,7 @@ func NewClient(apiKey, modelFlash, modelPro, modelImage, modelTTS, ttsVoice, api
 		llmSegmentFallback:   llmSegmentFallback,
 		genaiClient:          genaiClient,
 		unifiedClient:        unifiedClient,
+		boundaryCache:        boundaryCache,
 	}
 }
 
@@ -261,6 +266,39 @@ func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int
 		Int("text_length", len(text)).
 		Msg("Segmenting text")
 
+	// Check cache first
+	var cachedBoundaries []int
+	textHash := database.TextHash(text)
+	if c.boundaryCache != nil {
+		cached, err := c.boundaryCache.Get(ctx, textHash, inputType)
+		if err != nil {
+			log.Warn().Err(err).Msg("Failed to get from boundary cache, proceeding with LLM")
+		} else if cached != nil {
+			log.Info().
+				Str("text_hash", textHash).
+				Int("cached_boundaries", len(cached)).
+				Msg("Using cached boundaries")
+			cachedBoundaries = cached
+		}
+	}
+
+	// If we have cached boundaries, skip LLM and go straight to merging
+	if cachedBoundaries != nil {
+		byteOffsets := runeToByteOffsets(text)
+		
+		// Validate cached boundaries
+		validatedBoundaries := validateAndAdjustBoundaries(cachedBoundaries, text, byteOffsets)
+		
+		segments := mergeBoundariesIntoSegments(validatedBoundaries, byteOffsets, text, segmentsCount)
+		
+		log.Info().
+			Str("caller", "SegmentText").
+			Int("final_segments", len(segments)).
+			Msg("Text segmentation complete (from cache)")
+		
+		return segments, nil
+	}
+
 	prompt := c.buildSegmentPrompt(text, segmentsCount, inputType)
 
 	// Log segmentation request input
@@ -290,7 +328,7 @@ func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int
 		if tier.modelName == "" && tier.langModel == nil {
 			continue
 		}
-		segments, err := c.trySegmentWithModel(ctx, tier.name, tier.modelName, tier.langModel, prompt, text)
+		segments, err := c.trySegmentWithModel(ctx, tier.name, tier.modelName, tier.langModel, prompt, text, segmentsCount, inputType)
 		if err != nil {
 			log.Warn().Err(err).Str("model_tier", tier.name).Msg("Segment model failed, trying next")
 			continue
@@ -305,37 +343,255 @@ func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int
 	return c.oneSegmentFallback(text), nil
 }
 
-// buildSegmentPrompt builds the segmentation prompt with structured response instructions.
+// buildSegmentPrompt builds the segmentation prompt asking for ALL logical boundaries.
 func (c *Client) buildSegmentPrompt(text string, segmentsCount int, inputType string) string {
 	var styleGuidance string
 	switch inputType {
 	case "educational":
-		styleGuidance = "Focus on logical learning progression and key concepts."
+		styleGuidance = "Identify boundaries between concepts, subtopics, or learning units."
 	case "financial":
-		styleGuidance = "Separate by distinct financial topics or time periods."
+		styleGuidance = "Identify boundaries between financial topics, time periods, or categories."
 	case "fictional":
-		styleGuidance = "Segment by narrative beats, scenes, or chapters."
+		styleGuidance = "Identify boundaries between scenes, plot points, or narrative beats."
 	default:
-		styleGuidance = "Break at natural boundaries (paragraphs, sentences)."
+		styleGuidance = "Identify boundaries at paragraph breaks or major topic changes."
 	}
 
-	return fmt.Sprintf(`You are an expert at analyzing and segmenting text.
+	return fmt.Sprintf(`You are an expert at analyzing text structure and identifying logical segment boundaries.
 
-Your task: segment the following text into exactly %d logical parts. %s
+Task: Identify ALL natural breakpoints in the following text where the content logically divides. %s
 
-Important: The text may contain multiple blocks (e.g. main content and then "---" followed by image or file descriptions). You MUST segment the ENTIRE text from start_char 0 to the last character—every part of the text must be included in some segment.
+Rules:
+1. Return a list of character positions (indices) where segments should END
+2. Each position must be at a sentence boundary (ending with . ! ? etc.) - NEVER mid-sentence
+3. Identify at least %d breakpoints, but return MORE if the text has more natural divisions
+4. Prefer positions at paragraph breaks (\n\n) or section headers
+5. The final position in your list should be the end of the text (last character index)
+6. Count characters as visual units: emoji 🙋‍♂️ = 1 character (not bytes)
+7. Positions must be in ascending order
 
-Structured response requirements:
-- You must respond with a single JSON object only. No markdown, no code fences, no explanation before or after.
-- The JSON must have exactly one key: "segments", an array of objects.
-- Each object must have: "start_char" (number, 0-based byte index), "end_char" (number, exclusive), "title" (string).
-- Rules: segments cover the entire text with no gaps; no overlaps; start_char of segment N+1 equals end_char of segment N; break at natural boundaries.
+Response format (STRICT):
+- JSON object only (no markdown, no code fences)
+- One key "boundaries" (array of integers)
+- Each integer is a character position where a segment ends (0-based, exclusive end)
 
-Example valid response:
-{"segments":[{"start_char":0,"end_char":150,"title":"Introduction"},{"start_char":150,"end_char":350,"title":"Main Point"}]}
+Example for text with 500 characters and 5 natural breakpoints:
+{"boundaries":[120, 245, 350, 420, 500]}
 
-TEXT TO SEGMENT:
-%s`, segmentsCount, styleGuidance, text)
+This means: segment 1 is chars 0-120, segment 2 is chars 120-245, etc.
+
+TEXT TO ANALYZE:
+%s`, styleGuidance, segmentsCount-1, text)
+}
+
+// runeToByteOffsets returns a slice where offsets[i] is the byte index of the i-th grapheme cluster
+// (visual character) in s, and offsets[len-1] == len(s). This matches how LLMs count "characters"
+// (e.g., 🙋‍♂️ is 1 grapheme cluster, not 3 runes). Used to convert LLM character indices to byte positions.
+func runeToByteOffsets(s string) []int {
+	offsets := make([]int, 0, len(s)/2) // Rough estimate
+	byteOffset := 0
+	gr := uniseg.NewGraphemes(s)
+	for gr.Next() {
+		offsets = append(offsets, byteOffset)
+		byteOffset += len(gr.Bytes())
+	}
+	offsets = append(offsets, len(s))
+	return offsets
+}
+
+// validateAndAdjustBoundaries checks if boundaries are at sentence endings and adjusts them if not.
+func validateAndAdjustBoundaries(boundaries []int, text string, byteOffsets []int) []int {
+	adjusted := make([]int, 0, len(boundaries))
+	numGraphemes := len(byteOffsets) - 1
+	
+	for _, graphemeBoundary := range boundaries {
+		if graphemeBoundary >= numGraphemes {
+			adjusted = append(adjusted, numGraphemes)
+			continue
+		}
+		
+		bytePos := byteOffsets[graphemeBoundary]
+		
+		// Check if we're at a sentence boundary (looking back for . ! ?)
+		if isSentenceBoundary(text, bytePos) {
+			adjusted = append(adjusted, graphemeBoundary)
+			continue
+		}
+		
+		// Not at sentence boundary - search backward for nearest sentence ending
+		newBytePos := findPreviousSentenceBoundary(text, bytePos)
+		if newBytePos < 0 {
+			// No sentence boundary found, use original
+			log.Warn().
+				Int("grapheme_boundary", graphemeBoundary).
+				Int("byte_pos", bytePos).
+				Msg("Could not find sentence boundary, using original position")
+			adjusted = append(adjusted, graphemeBoundary)
+			continue
+		}
+		
+		// Convert byte position back to grapheme position
+		newGrapheme := findGraphemeForBytePos(byteOffsets, newBytePos)
+		log.Debug().
+			Int("original_grapheme", graphemeBoundary).
+			Int("adjusted_grapheme", newGrapheme).
+			Int("original_byte", bytePos).
+			Int("adjusted_byte", newBytePos).
+			Msg("Adjusted boundary to sentence ending")
+		adjusted = append(adjusted, newGrapheme)
+	}
+	
+	return adjusted
+}
+
+// isSentenceBoundary checks if the position is right after sentence-ending punctuation
+func isSentenceBoundary(text string, bytePos int) bool {
+	if bytePos <= 0 || bytePos > len(text) {
+		return false
+	}
+	
+	// Look back for sentence-ending punctuation: . ! ?
+	// Allow for closing quotes, parentheses, etc.
+	checkPos := bytePos - 1
+	for checkPos >= 0 && (text[checkPos] == ' ' || text[checkPos] == '\n' || text[checkPos] == ')' || text[checkPos] == '"' || text[checkPos] == '*') {
+		checkPos--
+	}
+	
+	if checkPos < 0 {
+		return false
+	}
+	
+	return text[checkPos] == '.' || text[checkPos] == '!' || text[checkPos] == '?'
+}
+
+// findPreviousSentenceBoundary searches backward from bytePos for a sentence-ending punctuation
+func findPreviousSentenceBoundary(text string, bytePos int) int {
+	if bytePos <= 0 {
+		return -1
+	}
+	
+	for i := bytePos - 1; i >= 0; i-- {
+		if text[i] == '.' || text[i] == '!' || text[i] == '?' {
+			// Found sentence ending - return position after it (and any trailing whitespace/punctuation)
+			j := i + 1
+			for j < len(text) && (text[j] == ' ' || text[j] == '\n' || text[j] == ')' || text[j] == '"' || text[j] == '*') {
+				j++
+			}
+			return j
+		}
+	}
+	
+	return -1
+}
+
+// findGraphemeForBytePos finds the grapheme index for a given byte position
+func findGraphemeForBytePos(byteOffsets []int, targetByte int) int {
+	// byteOffsets[i] = byte position of grapheme i
+	// Find largest i where byteOffsets[i] <= targetByte
+	for i := len(byteOffsets) - 1; i >= 0; i-- {
+		if byteOffsets[i] <= targetByte {
+			return i
+		}
+	}
+	return 0
+}
+
+// mergeBoundariesIntoSegments takes LLM-identified boundaries and merges them into the requested number of segments.
+// If LLM returned fewer boundaries than requested, returns all boundaries as segments.
+// If LLM returned more, merges logical segments by distributing them evenly.
+func mergeBoundariesIntoSegments(boundaries []int, byteOffsets []int, text string, requestedCount int) []*Segment {
+	numBoundaries := len(boundaries)
+
+	// If LLM returned fewer or equal boundaries than requested, use all of them
+	if numBoundaries <= requestedCount {
+		segments := make([]*Segment, numBoundaries)
+		startGrapheme := 0
+		for i, endGrapheme := range boundaries {
+			startByte := byteOffsets[startGrapheme]
+			endByte := byteOffsets[endGrapheme]
+			title := fmt.Sprintf("Part %d", i+1)
+			segments[i] = &Segment{
+				ID:        uuid.New(),
+				StartChar: startByte,
+				EndChar:   endByte,
+				Title:     &title,
+				Text:      text[startByte:endByte],
+			}
+			startGrapheme = endGrapheme
+		}
+		return segments
+	}
+
+	// LLM returned more boundaries than requested: merge them
+	// Strategy: distribute boundaries evenly, with remainder going to first segments
+	// Example: 11 boundaries → 3 segments: 11/3=3 remainder 2, so [4,4,3] boundaries per segment
+	boundariesPerSegment := numBoundaries / requestedCount
+	remainder := numBoundaries % requestedCount
+
+	log.Debug().
+		Int("num_boundaries", numBoundaries).
+		Int("requested_count", requestedCount).
+		Int("boundaries_per_segment", boundariesPerSegment).
+		Int("remainder", remainder).
+		Msg("Merging boundaries")
+
+	segments := make([]*Segment, requestedCount)
+	boundaryIdx := 0
+
+	for i := 0; i < requestedCount; i++ {
+		// This segment gets boundariesPerSegment boundaries, plus 1 if we have remainder left
+		count := boundariesPerSegment
+		if i < remainder {
+			count++
+		}
+
+		startGrapheme := 0
+		if boundaryIdx > 0 {
+			startGrapheme = boundaries[boundaryIdx-1]
+		}
+		endGrapheme := boundaries[boundaryIdx+count-1]
+
+		startByte := byteOffsets[startGrapheme]
+		endByte := byteOffsets[endGrapheme]
+		
+		log.Debug().
+			Int("segment", i+1).
+			Int("boundaries_used", count).
+			Int("start_grapheme", startGrapheme).
+			Int("end_grapheme", endGrapheme).
+			Int("start_byte", startByte).
+			Int("end_byte", endByte).
+			Str("text_preview", text[startByte:min(startByte+50, endByte)]+"..."+text[max(startByte, endByte-50):endByte]).
+			Msg("Creating segment")
+		
+		title := fmt.Sprintf("Part %d", i+1)
+
+		segments[i] = &Segment{
+			ID:        uuid.New(),
+			StartChar: startByte,
+			EndChar:   endByte,
+			Title:     &title,
+			Text:      text[startByte:endByte],
+		}
+
+		boundaryIdx += count
+	}
+
+	return segments
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // extractTextFromGenaiResponse returns the concatenated text from the first candidate's parts.
@@ -352,31 +608,27 @@ func (c *Client) extractTextFromGenaiResponse(resp *genai.GenerateContentRespons
 	return b.String()
 }
 
-// segmentResponseSchema returns the genai.Schema for segmentation JSON: {"segments": [{"start_char", "end_char", "title"}, ...]}.
+// segmentResponseSchema returns the genai.Schema for segmentation JSON: {"boundaries": [120, 245, 500]}.
 func segmentResponseSchema() *genai.Schema {
 	return &genai.Schema{
 		Type: genai.TypeObject,
 		Properties: map[string]*genai.Schema{
-			"segments": {
-				Type: genai.TypeArray,
+			"boundaries": {
+				Type:        genai.TypeArray,
+				Description: "Array of character positions where segments end (0-based, exclusive, ascending order)",
 				Items: &genai.Schema{
-					Type: genai.TypeObject,
-					Properties: map[string]*genai.Schema{
-						"start_char": {Type: genai.TypeInteger, Description: "0-based byte index where segment starts"},
-						"end_char":   {Type: genai.TypeInteger, Description: "Byte index where segment ends (exclusive)"},
-						"title":      {Type: genai.TypeString, Description: "Short descriptive title for the segment"},
-					},
-					Required: []string{"start_char", "end_char", "title"},
+					Type:        genai.TypeInteger,
+					Description: "Character position (visual character count, emojis = 1 char) where a segment ends",
 				},
 			},
 		},
-		Required: []string{"segments"},
+		Required: []string{"boundaries"},
 	}
 }
 
 // trySegmentWithModel calls the given model and parses the response into segments. Returns (nil, err) on failure, (segments, nil) on success.
 // When genaiClient is available and modelName is set, uses genai with ResponseSchema; otherwise uses langchaingo with JSON MIME type.
-func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, modelName string, langModel llms.Model, prompt, text string) ([]*Segment, error) {
+func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, modelName string, langModel llms.Model, prompt, text string, requestedCount int, inputType string) ([]*Segment, error) {
 	var response string
 
 	if c.genaiClient != nil && modelName != "" {
@@ -426,67 +678,74 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 	}
 
 	var result struct {
-		Segments []struct {
-			StartChar int    `json:"start_char"`
-			EndChar   int    `json:"end_char"`
-			Title     string `json:"title"`
-		} `json:"segments"`
+		Boundaries []int `json:"boundaries"`
 	}
 
 	if err := json.Unmarshal([]byte(response), &result); err != nil {
 		return nil, fmt.Errorf("parse JSON: %w", err)
 	}
 
-	if len(result.Segments) == 0 {
-		return nil, fmt.Errorf("no segments in response")
+	if len(result.Boundaries) == 0 {
+		return nil, fmt.Errorf("no boundaries in response")
 	}
 
-	// Validate and convert to Segment objects
-	segments := make([]*Segment, 0, len(result.Segments)+1)
-	for _, seg := range result.Segments {
-		if seg.StartChar < 0 || seg.EndChar > len(text) || seg.StartChar >= seg.EndChar {
-			return nil, fmt.Errorf("invalid segment bounds start=%d end=%d", seg.StartChar, seg.EndChar)
+	// LLM returns grapheme indices; convert to byte positions for correct slicing (handles emojis and multi-byte UTF-8).
+	byteOffsets := runeToByteOffsets(text)
+	numGraphemes := len(byteOffsets) - 1
+
+	// Validate boundaries
+	for i, boundary := range result.Boundaries {
+		if boundary < 0 || boundary > numGraphemes {
+			return nil, fmt.Errorf("boundary %d out of range: %d (text has %d graphemes)", i, boundary, numGraphemes)
 		}
-		segmentText := text[seg.StartChar:seg.EndChar]
-		title := seg.Title
-		segments = append(segments, &Segment{
-			ID:        uuid.New(),
-			StartChar: seg.StartChar,
-			EndChar:   seg.EndChar,
-			Title:     &title,
-			Text:      segmentText,
-		})
+		if i > 0 && boundary <= result.Boundaries[i-1] {
+			return nil, fmt.Errorf("boundaries must be in ascending order: %d <= %d", boundary, result.Boundaries[i-1])
+		}
 	}
 
-	// If the model did not cover the full text (e.g. only segmented the first block and ignored
-	// content after "\n\n---\n\n" such as image/file descriptions), append one segment for the remainder.
-	lastEnd := 0
-	if len(segments) > 0 {
-		lastEnd = segments[len(segments)-1].EndChar
-	}
-	if lastEnd < len(text) {
-		tail := strings.TrimSpace(text[lastEnd:])
-		if len(tail) > 0 {
-			title := "Additional content"
-			segments = append(segments, &Segment{
-				ID:        uuid.New(),
-				StartChar: lastEnd,
-				EndChar:   len(text),
-				Title:     &title,
-				Text:      text[lastEnd:],
-			})
-			log.Info().
-				Str("caller", "SegmentText").
-				Int("trailing_chars", len(text)-lastEnd).
-				Msg("Appended segment for trailing content (e.g. image/file description)")
-		}
+	// Ensure last boundary is the end of text
+	if result.Boundaries[len(result.Boundaries)-1] != numGraphemes {
+		result.Boundaries = append(result.Boundaries, numGraphemes)
 	}
 
 	log.Info().
 		Str("caller", "SegmentText").
+		Int("text_bytes", len(text)).
+		Int("text_graphemes", numGraphemes).
+		Int("boundaries_returned", len(result.Boundaries)).
+		Int("requested_segments", requestedCount).
+		Interface("boundaries_graphemes", result.Boundaries).
+		Msg("LLM returned boundaries")
+
+	// Validate boundaries are at sentence endings (. ! ?)
+	validatedBoundaries := validateAndAdjustBoundaries(result.Boundaries, text, byteOffsets)
+	
+	log.Info().
+		Str("caller", "SegmentText").
+		Interface("validated_boundaries", validatedBoundaries).
+		Msg("Boundaries after validation")
+
+	// Cache the validated boundaries for future use
+	if c.boundaryCache != nil {
+		textHash := database.TextHash(text)
+		if err := c.boundaryCache.Set(ctx, textHash, inputType, validatedBoundaries); err != nil {
+			log.Warn().Err(err).Msg("Failed to cache boundaries")
+		} else {
+			log.Info().
+				Str("text_hash", textHash).
+				Int("boundaries_cached", len(validatedBoundaries)).
+				Msg("Cached boundaries for future use")
+		}
+	}
+
+	// Merge boundaries into requested number of segments
+	segments := mergeBoundariesIntoSegments(validatedBoundaries, byteOffsets, text, requestedCount)
+
+	log.Info().
+		Str("caller", "SegmentText").
 		Str("model_tier", modelTier).
-		Int("segments_created", len(segments)).
-		Msg("Text segmentation complete (Gemini)")
+		Int("final_segments", len(segments)).
+		Msg("Text segmentation complete")
 
 	return segments, nil
 }
