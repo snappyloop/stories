@@ -49,3 +49,8 @@ type apiKeyRepository interface {
 	UpdateUsage(ctx context.Context, keyID uuid.UUID, chars int64, periodStartedAt time.Time) error
 	CreateAPIKey(ctx context.Context, userID uuid.UUID, quotaChars int64, quotaPeriod string) (plainKey string, key *models.APIKey, err error)
 }
+
+// factCheckRepository is the subset of fact-check DB operations used by JobService.
+type factCheckRepository interface {
+	ListByJob(ctx context.Context, jobID uuid.UUID) ([]*models.SegmentFactCheck, error)
+}

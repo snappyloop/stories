@@ -74,7 +74,7 @@ func NewHandler(
 		maxSegmentsCount:   maxSegmentsCount,
 		agentsClient:       agentsClient,
 		agentsGRPCURL:      agentsGRPCURL,
-		agentsMCPURL:      agentsMCPURL,
+		agentsMCPURL:       agentsMCPURL,
 	}
 }
 
@@ -320,6 +320,59 @@ func (h *Handler) GetAssetContent(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// injectFactChecksIntoHTML inserts fact-check divs into segment divs. For each non-empty fact-check,
+// finds the segment div with matching data-segment-id and appends a .fact-check div before its
+// outermost closing </div>. Uses string search instead of regex so that nested divs inside the
+// segment are handled correctly.
+func injectFactChecksIntoHTML(bodyHTML string, factChecks []*models.SegmentFactCheck) string {
+	if len(factChecks) == 0 {
+		return bodyHTML
+	}
+	for _, fc := range factChecks {
+		if fc.FactCheckText == "" {
+			continue
+		}
+		// Locate the opening tag for this segment.
+		openTag := `<div class="segment" data-segment-id="` + fc.SegmentID.String() + `">`
+		openIdx := strings.Index(bodyHTML, openTag)
+		if openIdx < 0 {
+			continue
+		}
+		afterOpen := openIdx + len(openTag)
+
+		// Walk the HTML after the opening tag and count nested divs to find the
+		// matching closing </div> for this segment.
+		depth := 1
+		pos := afterOpen
+		closeIdx := -1
+		for depth > 0 && pos < len(bodyHTML) {
+			// Find the next div-related tag (opening or closing).
+			nextOpen := strings.Index(bodyHTML[pos:], "<div")
+			nextClose := strings.Index(bodyHTML[pos:], "</div>")
+			if nextClose < 0 {
+				break // malformed HTML, bail out
+			}
+			if nextOpen >= 0 && nextOpen < nextClose {
+				depth++
+				pos += nextOpen + 4 // skip past "<div"
+			} else {
+				depth--
+				if depth == 0 {
+					closeIdx = pos + nextClose
+				}
+				pos += nextClose + 6 // skip past "</div>"
+			}
+		}
+		if closeIdx < 0 {
+			continue
+		}
+		escaped := html.EscapeString(fc.FactCheckText)
+		insert := `<div class="fact-check">` + escaped + `</div>`
+		bodyHTML = bodyHTML[:closeIdx] + insert + bodyHTML[closeIdx:]
+	}
+	return bodyHTML
+}
+
 // viewJobFallbackHTML builds HTML from segments and assets when job has no output_markup (e.g. legacy jobs).
 func viewJobFallbackHTML(resp *models.JobStatusResponse, jobIDStr string) string {
 	type segmentAssets struct {
@@ -350,7 +403,9 @@ func viewJobFallbackHTML(resp *models.JobStatusResponse, jobIDStr string) string
 	var b strings.Builder
 	for _, seg := range resp.Segments {
 		sa := bySegment[seg.ID]
-		b.WriteString(`<div class="segment">`)
+		b.WriteString(`<div class="segment" data-segment-id="`)
+		b.WriteString(seg.ID.String())
+		b.WriteString(`">`)
 		if sa != nil && sa.audio != nil {
 			b.WriteString(fmt.Sprintf(`<audio controls preload="metadata" src="/view/asset/%s?job_id=%s"></audio>`, sa.audio.Asset.ID.String(), jobIDStr))
 		}
@@ -389,6 +444,7 @@ func (h *Handler) ViewJob(w http.ResponseWriter, r *http.Request) {
 		// Fallback: build from segments when no markup (e.g. old jobs)
 		bodyHTML = viewJobFallbackHTML(resp, jobIDStr)
 	}
+	bodyHTML = injectFactChecksIntoHTML(bodyHTML, resp.FactChecks)
 
 	var b []byte
 	b = append(b, viewHeadBytes...)
@@ -460,4 +516,3 @@ func writeJSONError(w http.ResponseWriter, status int, message string) {
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
 }
-

@@ -25,6 +25,7 @@ type JobProcessor struct {
 	assetRepo       *database.AssetRepository
 	jobFileRepo     *database.JobFileRepository
 	fileRepo        *database.FileRepository
+	factCheckRepo   *database.FactCheckRepository
 	inputRegistry   *InputProcessorRegistry
 	llmClient       *llm.Client
 	storageClient   *storage.Client
@@ -42,6 +43,7 @@ func NewJobProcessor(
 	inputRegistry *InputProcessorRegistry,
 	jobFileRepo *database.JobFileRepository,
 	fileRepo *database.FileRepository,
+	factCheckRepo *database.FactCheckRepository,
 ) *JobProcessor {
 	return &JobProcessor{
 		db:              db,
@@ -50,6 +52,7 @@ func NewJobProcessor(
 		assetRepo:       database.NewAssetRepository(db),
 		jobFileRepo:     jobFileRepo,
 		fileRepo:        fileRepo,
+		factCheckRepo:   factCheckRepo,
 		inputRegistry:   inputRegistry,
 		llmClient:       llmClient,
 		storageClient:   storageClient,
@@ -419,6 +422,25 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 
 	if err := p.assetRepo.Create(ctx, imageAsset); err != nil {
 		return fmt.Errorf("failed to save image asset: %w", err)
+	}
+
+	// Optional fact-check (non-fatal: log only on error)
+	if job.FactCheckNeeded && p.factCheckRepo != nil {
+		factCheckText, err := p.llmClient.FactCheckSegment(ctx, seg.Text)
+		if err != nil {
+			log.Warn().Err(err).Str("job_id", job.ID.String()).Int("segment", idx).Msg("Fact-check failed, skipping for segment")
+		} else if factCheckText != "" {
+			fc := &models.SegmentFactCheck{
+				ID:            uuid.New(),
+				SegmentID:     segmentID,
+				JobID:         job.ID,
+				FactCheckText: factCheckText,
+				CreatedAt:     time.Now(),
+			}
+			if err := p.factCheckRepo.Create(ctx, fc); err != nil {
+				log.Warn().Err(err).Str("job_id", job.ID.String()).Int("segment", idx).Msg("Failed to save fact-check for segment")
+			}
+		}
 	}
 
 	// Update segment status to succeeded

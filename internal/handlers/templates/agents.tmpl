@@ -62,6 +62,19 @@
     </form>
   </section>
 
+  <section>
+    <h2>Fact-check</h2>
+    <form id="form-fact-check" class="agent-form">
+      <div class="transport-wrap">
+        {{if .GRPCAvailable}}<label><input type="radio" name="transport-fact-check" value="grpc" {{if not .MCPAvailable}}checked{{end}}> gRPC</label>{{end}}
+        {{if .MCPAvailable}}<label><input type="radio" name="transport-fact-check" value="mcp" {{if not .GRPCAvailable}}checked{{end}}> MCP</label>{{end}}
+      </div>
+      <label for="fact-check-text">Text</label>
+      <textarea id="fact-check-text" name="text" placeholder="Segment text to fact-check..."></textarea>
+      <button type="submit">Fact-check</button>
+    </form>
+  </section>
+
   {{if .GRPCAvailable}}
   <section>
     <h2>Narration <span class="muted">(gRPC only)</span></h2>
@@ -301,6 +314,11 @@
       if (formImage) formImage.addEventListener('submit', function(e) {
         e.preventDefault();
         submitForm('generate_image', 'form-image', 'transport-image', ['prompt']);
+      });
+      var formFactCheck = document.getElementById('form-fact-check');
+      if (formFactCheck) formFactCheck.addEventListener('submit', function(e) {
+        e.preventDefault();
+        submitForm('fact_check', 'form-fact-check', 'transport-fact-check', ['text']);
       });
     })();
   </script>

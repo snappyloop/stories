@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package factcheck.v1;
+
+option go_package = "github.com/snappy-loop/stories/gen/factcheck/v1;factcheckv1";
+
+service FactCheckService {
+  rpc FactCheckSegment(FactCheckSegmentRequest) returns (FactCheckSegmentResponse);
+}
+
+message FactCheckSegmentRequest {
+  string text = 1;
+}
+
+message FactCheckSegmentResponse {
+  string fact_check_text = 1; // empty if no issues found
+}

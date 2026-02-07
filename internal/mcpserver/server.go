@@ -69,15 +69,17 @@ type contentItem struct {
 
 // Server implements MCP JSON-RPC 2.0 over HTTP (tools/list and tools/call).
 type Server struct {
-	segmentAgent agents.SegmentationAgent
-	imageAgent   agents.ImageAgent
+	segmentAgent   agents.SegmentationAgent
+	imageAgent     agents.ImageAgent
+	factCheckAgent agents.FactCheckAgent
 }
 
 // NewServer returns a new MCP server that uses the given agents.
-func NewServer(segmentAgent agents.SegmentationAgent, imageAgent agents.ImageAgent) *Server {
+func NewServer(segmentAgent agents.SegmentationAgent, imageAgent agents.ImageAgent, factCheckAgent agents.FactCheckAgent) *Server {
 	return &Server{
-		segmentAgent: segmentAgent,
-		imageAgent:   imageAgent,
+		segmentAgent:   segmentAgent,
+		imageAgent:     imageAgent,
+		factCheckAgent: factCheckAgent,
 	}
 }
 
@@ -164,6 +166,17 @@ func (s *Server) handleToolsList() (interface{}, *rpcError) {
 					Required: []string{"prompt"},
 				},
 			},
+			{
+				Name:        "fact_check",
+				Description: "Fact-check segment text using search grounding; returns empty string if no issues",
+				InputSchema: inputSchema{
+					Type: "object",
+					Properties: map[string]schemaProp{
+						"text": {Type: "string", Description: "Segment text to fact-check"},
+					},
+					Required: []string{"text"},
+				},
+			},
 		},
 	}, nil
 }
@@ -185,6 +198,8 @@ func (s *Server) handleToolsCall(ctx context.Context, paramsRaw json.RawMessage)
 		return s.callGenerateImagePrompt(ctx, params.Arguments)
 	case "generate_image":
 		return s.callGenerateImage(ctx, params.Arguments)
+	case "fact_check":
+		return s.callFactCheck(ctx, params.Arguments)
 	default:
 		return nil, &rpcError{Code: -32602, Message: "Unknown tool: " + params.Name}
 	}
@@ -305,6 +320,27 @@ func (s *Server) callGenerateImage(ctx context.Context, args map[string]interfac
 	metaJSON, _ := json.Marshal(meta)
 	return &toolsCallResult{
 		Content: []contentItem{{Type: "text", Text: string(metaJSON)}},
+		IsError: false,
+	}, nil
+}
+
+func (s *Server) callFactCheck(ctx context.Context, args map[string]interface{}) (interface{}, *rpcError) {
+	if s.factCheckAgent == nil {
+		return &toolsCallResult{
+			Content: []contentItem{{Type: "text", Text: "fact-check agent not configured"}},
+			IsError: true,
+		}, nil
+	}
+	text := getStr(args, "text")
+	text, err := s.factCheckAgent.FactCheckSegment(ctx, text)
+	if err != nil {
+		return &toolsCallResult{
+			Content: []contentItem{{Type: "text", Text: err.Error()}},
+			IsError: true,
+		}, nil
+	}
+	return &toolsCallResult{
+		Content: []contentItem{{Type: "text", Text: text}},
 		IsError: false,
 	}, nil
 }
