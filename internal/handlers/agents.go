@@ -130,11 +130,10 @@ const agentsPageHTML = `<!DOCTYPE html>
   </section>
 
   <section>
-    <h2>Narration</h2>
+    <h2>Narration <span class="muted">(gRPC only)</span></h2>
     <form id="form-narration" class="agent-form">
       <div class="transport-wrap">
         <label><input type="radio" name="transport-narration" value="grpc" checked> gRPC</label>
-        <label><input type="radio" name="transport-narration" value="mcp"> MCP</label>
       </div>
       <label for="narration-text">Text</label>
       <textarea id="narration-text" name="text" placeholder="Text to narrate..."></textarea>
@@ -154,11 +153,10 @@ const agentsPageHTML = `<!DOCTYPE html>
   </section>
 
   <section>
-    <h2>Audio (TTS)</h2>
+    <h2>Audio (TTS) <span class="muted">(gRPC only)</span></h2>
     <form id="form-audio" class="agent-form">
       <div class="transport-wrap">
         <label><input type="radio" name="transport-audio" value="grpc" checked> gRPC</label>
-        <label><input type="radio" name="transport-audio" value="mcp"> MCP</label>
       </div>
       <label for="audio-script">Script</label>
       <textarea id="audio-script" name="script" placeholder="Narration script for TTS..."></textarea>
@@ -172,10 +170,11 @@ const agentsPageHTML = `<!DOCTYPE html>
   </section>
 
   <section>
-    <h2>Image prompt <span class="muted">(gRPC only)</span></h2>
+    <h2>Image prompt</h2>
     <form id="form-image-prompt" class="agent-form">
       <div class="transport-wrap">
         <label><input type="radio" name="transport-image-prompt" value="grpc" checked> gRPC</label>
+        <label><input type="radio" name="transport-image-prompt" value="mcp"> MCP</label>
       </div>
       <label for="image-prompt-text">Text</label>
       <textarea id="image-prompt-text" name="text" placeholder="Text to describe as image..."></textarea>
@@ -190,10 +189,11 @@ const agentsPageHTML = `<!DOCTYPE html>
   </section>
 
   <section>
-    <h2>Image <span class="muted">(gRPC only)</span></h2>
+    <h2>Image</h2>
     <form id="form-image" class="agent-form">
       <div class="transport-wrap">
         <label><input type="radio" name="transport-image" value="grpc" checked> gRPC</label>
+        <label><input type="radio" name="transport-image" value="mcp"> MCP</label>
       </div>
       <label for="image-prompt">Prompt</label>
       <textarea id="image-prompt" name="prompt" placeholder="Image generation prompt..."></textarea>
