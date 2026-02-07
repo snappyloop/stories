@@ -41,15 +41,15 @@ type Config struct {
 	S3PublicURL string
 
 	// Gemini API
-	GeminiAPIKey      string
-	GeminiAPIEndpoint string // if set, overrides default Gemini API base URL (e.g. http://host.docker.internal:31300/gemini)
-	GeminiModelPro    string
-	GeminiModelFlash  string
-	GeminiModelImage  string // image generation, e.g. gemini-3-pro-image-preview
+	GeminiAPIKey               string
+	GeminiAPIEndpoint          string // if set, overrides default Gemini API base URL (e.g. http://host.docker.internal:31300/gemini)
+	GeminiModelPro             string
+	GeminiModelFlash           string
+	GeminiModelImage           string // image generation, e.g. gemini-3-pro-image-preview
 	GeminiModelTTS             string // TTS model, e.g. gemini-2.5-pro-preview-tts
 	GeminiTTSVoice             string // TTS voice name, e.g. Zephyr, Puck, Aoede
-	GeminiModelSegmentPrimary   string // primary model for segmentation, e.g. gemini-3.0-flash
-	GeminiModelSegmentFallback  string // fallback model for segmentation, e.g. gemini-2.5-flash-lite
+	GeminiModelSegmentPrimary  string // primary model for segmentation, e.g. gemini-3.0-flash
+	GeminiModelSegmentFallback string // fallback model for segmentation, e.g. gemini-2.5-flash-lite
 
 	// Processing
 	MaxInputLength        int
@@ -107,14 +107,14 @@ func Load() *Config {
 		S3UseSSL:    getEnvBool("S3_USE_SSL", false),
 		S3PublicURL: getEnv("S3_PUBLIC_URL", ""),
 
-		GeminiAPIKey:      getEnv("GEMINI_API_KEY", ""),
-		GeminiAPIEndpoint: getEnv("GEMINI_API_ENDPOINT", ""),
-		GeminiModelPro:    getEnv("GEMINI_MODEL_PRO", "gemini-3-pro-preview"),
-		GeminiModelFlash:  getEnv("GEMINI_MODEL_FLASH", "gemini-2.5-flash-lite"),
-		GeminiModelImage:  getEnv("GEMINI_MODEL_IMAGE", "gemini-3-pro-image-preview"),
-		GeminiModelTTS:            getEnv("GEMINI_MODEL_TTS", "gemini-2.5-pro-preview-tts"),
-		GeminiTTSVoice:            getEnv("GEMINI_TTS_VOICE", "Zephyr"),
-		GeminiModelSegmentPrimary:  getEnv("GEMINI_MODEL_SEGMENT_PRIMARY", "gemini-3.0-flash"),
+		GeminiAPIKey:               getEnv("GEMINI_API_KEY", ""),
+		GeminiAPIEndpoint:          getEnv("GEMINI_API_ENDPOINT", ""),
+		GeminiModelPro:             getEnv("GEMINI_MODEL_PRO", "gemini-3-pro-preview"),
+		GeminiModelFlash:           getEnv("GEMINI_MODEL_FLASH", "gemini-2.5-flash-lite"),
+		GeminiModelImage:           getEnv("GEMINI_MODEL_IMAGE", "gemini-3-pro-image-preview"),
+		GeminiModelTTS:             getEnv("GEMINI_MODEL_TTS", "gemini-2.5-pro-preview-tts"),
+		GeminiTTSVoice:             getEnv("GEMINI_TTS_VOICE", "Zephyr"),
+		GeminiModelSegmentPrimary:  getEnv("GEMINI_MODEL_SEGMENT_PRIMARY", "gemini-3-flash-preview"),
 		GeminiModelSegmentFallback: getEnv("GEMINI_MODEL_SEGMENT_FALLBACK", "gemini-2.5-flash-lite"),
 
 		MaxInputLength:        getEnvInt("MAX_INPUT_LENGTH", 50000),

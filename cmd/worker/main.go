@@ -73,7 +73,10 @@ func main() {
 		log.Fatal().Err(err).Msg("Failed to initialize storage client")
 	}
 
-	// Initialize Gemini LLM client
+	// Initialize boundary cache repository
+	boundaryCacheRepo := database.NewBoundaryCacheRepository(db)
+
+	// Initialize Gemini LLM client with boundary cache
 	llmClient := llm.NewClient(
 		cfg.GeminiAPIKey,
 		cfg.GeminiModelFlash,
@@ -84,6 +87,7 @@ func main() {
 		cfg.GeminiAPIEndpoint,
 		cfg.GeminiModelSegmentPrimary,
 		cfg.GeminiModelSegmentFallback,
+		boundaryCacheRepo,
 	)
 
 	// Initialize Kafka producer for webhook events

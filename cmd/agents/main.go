@@ -56,6 +56,9 @@ func main() {
 
 	authService := auth.NewService(db)
 
+	// Initialize boundary cache repository
+	boundaryCacheRepo := database.NewBoundaryCacheRepository(db)
+
 	llmClient := llm.NewClient(
 		cfg.GeminiAPIKey,
 		cfg.GeminiModelFlash,
@@ -66,6 +69,7 @@ func main() {
 		cfg.GeminiAPIEndpoint,
 		cfg.GeminiModelSegmentPrimary,
 		cfg.GeminiModelSegmentFallback,
+		boundaryCacheRepo,
 	)
 
 	segmentAgent := agents.NewSegmentationAgent(llmClient)
