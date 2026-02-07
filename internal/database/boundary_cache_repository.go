@@ -29,16 +29,16 @@ func TextHash(text string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// Get retrieves cached boundaries for a text hash and input type
-func (r *BoundaryCacheRepository) Get(ctx context.Context, textHash, inputType string) ([]int, error) {
+// Get retrieves cached boundaries for a text hash
+func (r *BoundaryCacheRepository) Get(ctx context.Context, textHash string) ([]int, error) {
 	query := `
 		SELECT boundaries
 		FROM segment_boundaries_cache
-		WHERE text_hash = $1 AND input_type = $2
+		WHERE text_hash = $1
 	`
 
 	var boundariesJSON []byte
-	err := r.db.QueryRowContext(ctx, query, textHash, inputType).Scan(&boundariesJSON)
+	err := r.db.QueryRowContext(ctx, query, textHash).Scan(&boundariesJSON)
 
 	if err == sql.ErrNoRows {
 		return nil, nil // Cache miss
@@ -56,23 +56,22 @@ func (r *BoundaryCacheRepository) Get(ctx context.Context, textHash, inputType s
 	return boundaries, nil
 }
 
-// Set stores boundaries in cache for a text hash and input type
-func (r *BoundaryCacheRepository) Set(ctx context.Context, textHash, inputType string, boundaries []int) error {
+// Set stores boundaries in cache for a text hash
+func (r *BoundaryCacheRepository) Set(ctx context.Context, textHash string, boundaries []int) error {
 	boundariesJSON, err := json.Marshal(boundaries)
 	if err != nil {
 		return fmt.Errorf("marshal boundaries: %w", err)
 	}
 
 	query := `
-		INSERT INTO segment_boundaries_cache (text_hash, input_type, boundaries, created_at)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO segment_boundaries_cache (text_hash, boundaries, created_at)
+		VALUES ($1, $2, $3)
 		ON CONFLICT (text_hash) DO UPDATE
 		SET boundaries = EXCLUDED.boundaries,
-		    input_type = EXCLUDED.input_type,
 		    created_at = EXCLUDED.created_at
 	`
 
-	_, err = r.db.ExecContext(ctx, query, textHash, inputType, boundariesJSON, time.Now())
+	_, err = r.db.ExecContext(ctx, query, textHash, boundariesJSON, time.Now())
 	if err != nil {
 		return fmt.Errorf("insert cache: %w", err)
 	}

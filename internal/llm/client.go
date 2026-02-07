@@ -270,7 +270,7 @@ func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int
 	var cachedBoundaries []int
 	textHash := database.TextHash(text)
 	if c.boundaryCache != nil {
-		cached, err := c.boundaryCache.Get(ctx, textHash, inputType)
+		cached, err := c.boundaryCache.Get(ctx, textHash)
 		if err != nil {
 			log.Warn().Err(err).Msg("Failed to get from boundary cache, proceeding with LLM")
 		} else if cached != nil {
@@ -728,7 +728,7 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 	// Cache the validated boundaries for future use
 	if c.boundaryCache != nil {
 		textHash := database.TextHash(text)
-		if err := c.boundaryCache.Set(ctx, textHash, inputType, validatedBoundaries); err != nil {
+		if err := c.boundaryCache.Set(ctx, textHash, validatedBoundaries); err != nil {
 			log.Warn().Err(err).Msg("Failed to cache boundaries")
 		} else {
 			log.Info().
