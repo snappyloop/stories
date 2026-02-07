@@ -22,10 +22,9 @@ func NewBoundaryCacheRepository(db *DB) *BoundaryCacheRepository {
 }
 
 // TextHash computes SHA-256 hash of text for cache key.
-// Text is normalized (trimmed and lowercased) before hashing for better cache hits.
+// ToLower is applied here so the hash is case-insensitive without changing length; boundaries (grapheme indices) then match.
 func TextHash(text string) string {
-	normalized := strings.ToLower(strings.TrimSpace(text))
-	h := sha256.Sum256([]byte(normalized))
+	h := sha256.Sum256([]byte(strings.ToLower(text)))
 	return hex.EncodeToString(h[:])
 }
 

@@ -260,6 +260,7 @@ type Image struct {
 // SegmentText segments text into logical parts.
 // Uses 3.0 flash first, then 2.5 flash; if both fail or return no valid response, returns one segment (whole text).
 func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int, inputType string) ([]*Segment, error) {
+	text = strings.TrimSpace(text)
 	log.Info().
 		Int("segments_count", segmentsCount).
 		Str("type", inputType).
