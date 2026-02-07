@@ -340,7 +340,7 @@ func mergeBoundariesIntoSegments(boundaries []int, byteOffsets []int, text strin
 			Int("end_grapheme", endGrapheme).
 			Int("start_byte", startByte).
 			Int("end_byte", endByte).
-			Str("text_preview", text[startByte:minInt(startByte+50, endByte)]+"..."+text[maxInt(startByte, endByte-50):endByte]).
+			Str("text_preview", text[startByte:min(startByte+50, endByte)]+"..."+text[max(startByte, endByte-50):endByte]).
 			Msg("Creating segment")
 
 		title := fmt.Sprintf("Part %d", i+1)
@@ -428,6 +428,7 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 	log.Info().
 		Str("caller", "SegmentText").
 		Str("model_tier", modelTier).
+		Str("input_type", inputType).
 		Int("response_len", len(response)).
 		Msg("SegmentText LLM response output")
 	logGeminiResponse("SegmentText", response)
@@ -509,6 +510,7 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 	log.Info().
 		Str("caller", "SegmentText").
 		Str("model_tier", modelTier).
+		Str("input_type", inputType).
 		Int("final_segments", len(segments)).
 		Msg("Text segmentation complete")
 

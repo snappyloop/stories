@@ -14,7 +14,7 @@ import (
 // Uses genai client and GenerateContent; when the SDK supports it, set model.ResponseModality = []string{"IMAGE"}.
 func (c *Client) GenerateImage(ctx context.Context, prompt string) (*Image, error) {
 	log.Debug().
-		Str("prompt", prompt[:minInt(50, len(prompt))]+"...").
+		Str("prompt", prompt[:min(50, len(prompt))]+"...").
 		Msg("Generating image")
 
 	if c.genaiClient != nil {
@@ -22,7 +22,7 @@ func (c *Client) GenerateImage(ctx context.Context, prompt string) (*Image, erro
 		if err != nil {
 			log.Error().Err(err).
 				Str("model", c.modelPro).
-				Str("prompt_preview", prompt[:minInt(80, len(prompt))]).
+				Str("prompt_preview", prompt[:min(80, len(prompt))]).
 				Msg("Genai image generation failed (strict modality: no fallback)")
 			return nil, err
 		}
