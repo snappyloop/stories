@@ -88,27 +88,33 @@ func (h *Handler) agentsNavLink() template.HTML {
 
 // Index serves the index page: list of all tasks (jobs) with statuses and view links
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
 	data := struct{ NavAgentsLink template.HTML }{NavAgentsLink: h.agentsNavLink()}
-	if err := executeTemplate(w, "index", data); err != nil {
+	buf, err := executeTemplateToBytes("index", data)
+	if err != nil {
 		log.Error().Err(err).Msg("index template")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(buf)
 }
 
 // Generation serves the generation page: send test request and get job data forms
 func (h *Handler) Generation(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
 	data := struct {
 		NavAgentsLink    template.HTML
 		MaxSegmentsCount int
 	}{NavAgentsLink: h.agentsNavLink(), MaxSegmentsCount: h.maxSegmentsCount}
-	if err := executeTemplate(w, "generation", data); err != nil {
+	buf, err := executeTemplateToBytes("generation", data)
+	if err != nil {
 		log.Error().Err(err).Msg("generation template")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(buf)
 }
 
 // CreateUser handles POST /users — creates a user and an API key, returns both (API key shown once)

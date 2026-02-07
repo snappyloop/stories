@@ -3,6 +3,8 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/rs/zerolog/log"
 )
 
 // agentsPageData is passed to the agents page template.
@@ -15,15 +17,19 @@ type agentsPageData struct {
 // When both URLs are empty, shows "not configured" and hides the Agents nav link.
 // When only one protocol is set, hides the other transport option and gRPC-only agent panels if gRPC is off.
 func (h *Handler) AgentsPage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
 	data := agentsPageData{
 		GRPCAvailable: h.agentsGRPCURL != "",
 		MCPAvailable:  h.agentsMCPURL != "",
 	}
-	if err := executeTemplate(w, "agents", data); err != nil {
+	buf, err := executeTemplateToBytes("agents", data)
+	if err != nil {
+		log.Error().Err(err).Msg("agents template")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write(buf)
 }
 
 // AgentsCall handles POST /agents/call — calls the agents service (gRPC or MCP) and returns request (redacted) and response.
