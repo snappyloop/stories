@@ -88,8 +88,8 @@ func Load() *Config {
 		GRPCAddr: getEnv("GRPC_ADDR", ":9090"),
 		MCPAddr:  getEnv("MCP_ADDR", ":9091"),
 
-		AgentsGRPCURL: getEnv("AGENTS_GRPC_URL", "localhost:9090"),
-		AgentsMCPURL:  getEnv("AGENTS_MCP_URL", "http://localhost:9091"),
+		AgentsGRPCURL: getEnv("AGENTS_GRPC_URL", ""),
+		AgentsMCPURL:  getEnv("AGENTS_MCP_URL", ""),
 
 		DatabaseURL: getEnv("DATABASE_URL", ""),
 

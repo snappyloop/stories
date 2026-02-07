@@ -67,11 +67,12 @@ func main() {
 	fileService := services.NewFileService(fileRepo, storageClient, cfg.S3Bucket, cfg)
 
 	var agentsClient *agentsclient.Client
-	if cfg.AgentsGRPCURL != "" && cfg.AgentsMCPURL != "" {
+	if cfg.AgentsGRPCURL != "" || cfg.AgentsMCPURL != "" {
 		var err error
 		agentsClient, err = agentsclient.NewClient(cfg.AgentsGRPCURL, cfg.AgentsMCPURL)
 		if err != nil {
 			log.Warn().Err(err).Msg("Agents client not available; /agents page will return 503 for calls")
+			agentsClient = nil
 		} else {
 			defer agentsClient.Close()
 		}
@@ -87,6 +88,8 @@ func main() {
 		cfg.DefaultQuotaPeriod,
 		cfg.MaxSegmentsCount,
 		agentsClient,
+		cfg.AgentsGRPCURL,
+		cfg.AgentsMCPURL,
 	)
 
 	authService := auth.NewService(db)

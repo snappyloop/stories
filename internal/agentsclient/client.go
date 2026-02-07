@@ -28,24 +28,38 @@ type Client struct {
 	httpCli  *http.Client
 }
 
-// NewClient dials the gRPC server and prepares MCP URL. Call Close when done.
+// NewClient dials the gRPC server (if grpcURL is set) and stores MCP URL (if set). Call Close when done.
+// At least one of grpcURL or mcpURL must be non-empty. Call will return an error for a transport that is not configured.
 func NewClient(grpcURL, mcpURL string) (*Client, error) {
-	conn, err := grpc.NewClient(grpcURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, fmt.Errorf("grpc dial: %w", err)
+	if grpcURL == "" && mcpURL == "" {
+		return nil, fmt.Errorf("at least one of grpcURL or mcpURL must be set")
 	}
-	return &Client{
+	var conn *grpc.ClientConn
+	if grpcURL != "" {
+		var err error
+		conn, err = grpc.NewClient(grpcURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			return nil, fmt.Errorf("grpc dial: %w", err)
+		}
+	}
+	c := &Client{
 		grpcConn: conn,
-		segCli:   segmentationv1.NewSegmentationServiceClient(conn),
-		audioCli: audiov1.NewAudioServiceClient(conn),
-		imageCli: imagev1.NewImageServiceClient(conn),
 		mcpURL:   mcpURL,
 		httpCli:  &http.Client{Timeout: 120 * time.Second},
-	}, nil
+	}
+	if conn != nil {
+		c.segCli = segmentationv1.NewSegmentationServiceClient(conn)
+		c.audioCli = audiov1.NewAudioServiceClient(conn)
+		c.imageCli = imagev1.NewImageServiceClient(conn)
+	}
+	return c, nil
 }
 
-// Close closes the gRPC connection.
+// Close closes the gRPC connection (no-op if gRPC was not configured).
 func (c *Client) Close() error {
+	if c.grpcConn == nil {
+		return nil
+	}
 	return c.grpcConn.Close()
 }
 
@@ -71,8 +85,14 @@ func (c *Client) Call(ctx context.Context, apiKey, transport, action string, par
 
 	switch transport {
 	case "grpc":
+		if c.grpcConn == nil {
+			return requestRedacted, nil, fmt.Errorf("gRPC not configured (AGENTS_GRPC_URL empty)")
+		}
 		response, err = c.callGRPC(ctx, apiKey, action, params)
 	case "mcp":
+		if c.mcpURL == "" {
+			return requestRedacted, nil, fmt.Errorf("MCP not configured (AGENTS_MCP_URL empty)")
+		}
 		response, err = c.callMCP(ctx, apiKey, action, params)
 	default:
 		return requestRedacted, nil, fmt.Errorf("unknown transport: %s", transport)
