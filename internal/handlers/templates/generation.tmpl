@@ -75,7 +75,7 @@
   </section>
 
   <section>
-    <h2>Send test request</h2>
+    <h2>Send request</h2>
     <form id="test-request">
       <label for="text">Text (optional if you add files)</label>
       <textarea id="text" name="text" placeholder="Short story or paragraph to enrich..." maxlength="50000"></textarea>
@@ -97,7 +97,7 @@
         <option value="free_speech">Free speech</option>
         <option value="podcast">Podcast</option>
       </select>
-      <button type="submit" id="send-test-btn">Send test request</button>
+      <button type="submit" id="send-test-btn">Send request</button>
     </form>
     <div id="test-request-result" class="result" style="display:none;"></div>
   </section>
@@ -197,7 +197,7 @@
               resultEl.textContent = 'Upload failed: ' + (uploadData.error || uploadRes.statusText);
               resultEl.classList.add('error');
               sendBtn.disabled = false;
-              sendBtn.textContent = 'Send test request';
+              sendBtn.textContent = 'Send request';
               return;
             }
             fileIds.push(uploadData.file_id);
@@ -206,7 +206,7 @@
           resultEl.textContent = 'Upload error: ' + err.message;
           resultEl.classList.add('error');
           sendBtn.disabled = false;
-          sendBtn.textContent = 'Send test request';
+          sendBtn.textContent = 'Send request';
           return;
         }
         sendBtn.textContent = 'Creating job...';
@@ -234,7 +234,7 @@
           resultEl.textContent = 'Error: ' + (data.error || res.statusText);
           resultEl.classList.add('error');
           sendBtn.disabled = false;
-          sendBtn.textContent = 'Send test request';
+          sendBtn.textContent = 'Send request';
           return;
         }
         resultEl.textContent = 'Job created.\njob_id: ' + data.job_id + '\nstatus: ' + data.status;
@@ -244,7 +244,7 @@
         resultEl.classList.add('error');
       }
       sendBtn.disabled = false;
-      sendBtn.textContent = 'Send test request';
+      sendBtn.textContent = 'Send request';
     });
 
     var getJobPollTimer = null;
