@@ -259,7 +259,11 @@ type Image struct {
 
 // SegmentText segments text into logical parts.
 // Uses 3.0 flash first, then 2.5 flash; if both fail or return no valid response, returns one segment (whole text).
+// segmentsCount is normalized to at least 1 to avoid division-by-zero in merge logic; callers may pass 0 from gRPC/jobs.
 func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int, inputType string) ([]*Segment, error) {
+	if segmentsCount < 1 {
+		segmentsCount = 1
+	}
 	text = strings.TrimSpace(text)
 	log.Info().
 		Int("segments_count", segmentsCount).
@@ -513,7 +517,11 @@ func findGraphemeForBytePos(byteOffsets []int, targetByte int) int {
 // mergeBoundariesIntoSegments takes LLM-identified boundaries and merges them into the requested number of segments.
 // If LLM returned fewer boundaries than requested, returns all boundaries as segments.
 // If LLM returned more, merges logical segments by distributing them evenly.
+// requestedCount must be at least 1; values < 1 are treated as 1 to avoid division by zero.
 func mergeBoundariesIntoSegments(boundaries []int, byteOffsets []int, text string, requestedCount int) []*Segment {
+	if requestedCount < 1 {
+		requestedCount = 1
+	}
 	numBoundaries := len(boundaries)
 
 	// If LLM returned fewer or equal boundaries than requested, use all of them
