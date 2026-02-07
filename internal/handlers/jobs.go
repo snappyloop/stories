@@ -340,7 +340,10 @@ func injectFactChecksIntoHTML(bodyHTML string, factChecks []*models.SegmentFactC
 		}
 		escaped := html.EscapeString(fc.FactCheckText)
 		insert := `<div class="fact-check">` + escaped + `</div>`
-		bodyHTML = re.ReplaceAllString(bodyHTML, "$1$2"+insert+"$3")
+		bodyHTML = re.ReplaceAllStringFunc(bodyHTML, func(match string) string {
+			groups := re.FindStringSubmatch(match)
+			return groups[1] + groups[2] + insert + groups[3]
+		})
 	}
 	return bodyHTML
 }

@@ -2,11 +2,18 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/rs/zerolog/log"
 	unifiedgenai "google.golang.org/genai"
 )
+
+// ErrFactCheckNotConfigured is returned when fact-checking is requested but the
+// unified (Gemini) client is not configured. Callers should treat this as a
+// non-fatal error and avoid persisting a misleading empty result.
+var ErrFactCheckNotConfigured = errors.New("fact-check unavailable: unified AI client not configured")
 
 const maxFactCheckLen = 1024 // made larger than requested in case LLM returns more than requested
 
@@ -22,8 +29,8 @@ func (c *Client) FactCheckSegment(ctx context.Context, text string) (string, err
 		return "", nil
 	}
 	if c.unifiedClient == nil {
-		log.Debug().Msg("FactCheckSegment: unified client not configured, skipping")
-		return "", nil
+		log.Warn().Msg("FactCheckSegment: unified client not configured")
+		return "", ErrFactCheckNotConfigured
 	}
 
 	contents := unifiedgenai.Text(factCheckPrompt + "\n\nText to check:\n" + text)
@@ -47,8 +54,8 @@ func (c *Client) FactCheckSegment(ctx context.Context, text string) (string, err
 	if strings.HasSuffix(out, " 0") || strings.HasSuffix(out, ". 0") {
 		return "", nil
 	}
-	if len(out) > maxFactCheckLen {
-		out = out[:maxFactCheckLen]
+	if utf8.RuneCountInString(out) > maxFactCheckLen {
+		out = string([]rune(out)[:maxFactCheckLen])
 	}
 	return out, nil
 }
