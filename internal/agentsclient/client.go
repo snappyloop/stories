@@ -9,6 +9,7 @@ import (
 	"time"
 
 	audiov1 "github.com/snappy-loop/stories/gen/audio/v1"
+	factcheckv1 "github.com/snappy-loop/stories/gen/factcheck/v1"
 	imagev1 "github.com/snappy-loop/stories/gen/image/v1"
 	segmentationv1 "github.com/snappy-loop/stories/gen/segmentation/v1"
 	"google.golang.org/grpc"
@@ -20,12 +21,13 @@ const apiKeyRedacted = "***"
 
 // Client calls the agents service via gRPC or MCP.
 type Client struct {
-	grpcConn *grpc.ClientConn
-	segCli   segmentationv1.SegmentationServiceClient
-	audioCli audiov1.AudioServiceClient
-	imageCli imagev1.ImageServiceClient
-	mcpURL   string
-	httpCli  *http.Client
+	grpcConn    *grpc.ClientConn
+	segCli      segmentationv1.SegmentationServiceClient
+	audioCli    audiov1.AudioServiceClient
+	imageCli    imagev1.ImageServiceClient
+	factCheckCli factcheckv1.FactCheckServiceClient
+	mcpURL      string
+	httpCli     *http.Client
 }
 
 // NewClient dials the gRPC server (if grpcURL is set) and stores MCP URL (if set). Call Close when done.
@@ -51,6 +53,7 @@ func NewClient(grpcURL, mcpURL string) (*Client, error) {
 		c.segCli = segmentationv1.NewSegmentationServiceClient(conn)
 		c.audioCli = audiov1.NewAudioServiceClient(conn)
 		c.imageCli = imagev1.NewImageServiceClient(conn)
+		c.factCheckCli = factcheckv1.NewFactCheckServiceClient(conn)
 	}
 	return c, nil
 }
@@ -77,7 +80,7 @@ func RedactRequest(req map[string]interface{}) map[string]interface{} {
 }
 
 // Call invokes the agents service. transport is "grpc" or "mcp". action is one of:
-// segment_text, generate_narration, generate_audio, generate_image_prompt, generate_image.
+// segment_text, generate_narration, generate_audio, generate_image_prompt, generate_image, fact_check.
 // params must contain the action-specific fields plus "api_key".
 // Returns (redacted request, response, error). Response is a map or struct for JSON encoding.
 func (c *Client) Call(ctx context.Context, apiKey, transport, action string, params map[string]interface{}) (requestRedacted map[string]interface{}, response interface{}, err error) {
@@ -232,6 +235,15 @@ func (c *Client) callGRPC(ctx context.Context, apiKey, action string, params map
 			out["url"] = u
 		}
 		return out, nil
+	case "fact_check":
+		req := &factcheckv1.FactCheckSegmentRequest{
+			Text: getStr(params, "text"),
+		}
+		resp, err := c.factCheckCli.FactCheckSegment(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{"fact_check_text": resp.GetFactCheckText()}, nil
 	default:
 		return nil, fmt.Errorf("unknown action: %s", action)
 	}
@@ -285,6 +297,9 @@ func (c *Client) callMCP(ctx context.Context, apiKey, action string, params map[
 	case "generate_image":
 		mcpAction = "generate_image"
 		args["prompt"] = getStr(params, "prompt")
+	case "fact_check":
+		mcpAction = "fact_check"
+		args["text"] = getStr(params, "text")
 	default:
 		return nil, fmt.Errorf("unknown action: %s", action)
 	}

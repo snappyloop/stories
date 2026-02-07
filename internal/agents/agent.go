@@ -24,6 +24,11 @@ type ImageAgent interface {
 	GenerateImage(ctx context.Context, prompt string) (*llm.Image, error)
 }
 
+// FactCheckAgent fact-checks segment text using search grounding.
+type FactCheckAgent interface {
+	FactCheckSegment(ctx context.Context, text string) (string, error)
+}
+
 // AudioData reads the full audio bytes from llm.Audio (for gRPC/MCP which need bytes).
 func AudioData(a *llm.Audio) ([]byte, error) {
 	if a == nil || a.Data == nil {

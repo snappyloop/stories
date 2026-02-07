@@ -12,7 +12,8 @@ proto: ## Generate Go code from proto files (requires protoc, protoc-gen-go, pro
 		--go-grpc_out=. --go-grpc_opt=module=github.com/snappy-loop/stories \
 		proto/segmentation/v1/segmentation.proto \
 		proto/audio/v1/audio.proto \
-		proto/image/v1/image.proto
+		proto/image/v1/image.proto \
+		proto/factcheck/v1/factcheck.proto
 	@echo "Proto code generated in gen/"
 
 build: ## Build all binaries

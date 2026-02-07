@@ -21,6 +21,7 @@ import (
 	"github.com/snappy-loop/stories/internal/storage"
 	"github.com/snappy-loop/stories/migrations"
 	audiov1 "github.com/snappy-loop/stories/gen/audio/v1"
+	factcheckv1 "github.com/snappy-loop/stories/gen/factcheck/v1"
 	imagev1 "github.com/snappy-loop/stories/gen/image/v1"
 	segmentationv1 "github.com/snappy-loop/stories/gen/segmentation/v1"
 	"google.golang.org/grpc"
@@ -75,6 +76,7 @@ func main() {
 	segmentAgent := agents.NewSegmentationAgent(llmClient)
 	audioAgent := agents.NewAudioAgent(llmClient)
 	imageAgent := agents.NewImageAgent(llmClient)
+	factCheckAgent := agents.NewFactCheckAgent(llmClient)
 
 	var storageClient *storage.Client
 	if cfg.S3Bucket != "" && (cfg.S3AccessKey != "" || cfg.S3Endpoint != "") {
@@ -93,6 +95,7 @@ func main() {
 	segmentationv1.RegisterSegmentationServiceServer(grpcSrv, grpcserver.NewSegmentationServer(segmentAgent))
 	audiov1.RegisterAudioServiceServer(grpcSrv, grpcserver.NewAudioServer(audioAgent, storageClient))
 	imagev1.RegisterImageServiceServer(grpcSrv, grpcserver.NewImageServer(imageAgent, storageClient))
+	factcheckv1.RegisterFactCheckServiceServer(grpcSrv, grpcserver.NewFactCheckServer(factCheckAgent))
 
 	lis, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
@@ -106,7 +109,7 @@ func main() {
 	}()
 
 	// MCP HTTP server with auth
-	mcpSrv := mcpserver.NewServer(segmentAgent, imageAgent)
+	mcpSrv := mcpserver.NewServer(segmentAgent, imageAgent, factCheckAgent)
 	mcpHandler := mcpserver.AuthMiddleware(authService)(mcpSrv.Handler())
 	mcpHTTP := &http.Server{
 		Addr:         cfg.MCPAddr,
