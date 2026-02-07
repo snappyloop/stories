@@ -407,7 +407,9 @@ func validateAndAdjustBoundaries(boundaries []int, text string, byteOffsets []in
 	
 	for _, graphemeBoundary := range boundaries {
 		if graphemeBoundary >= numGraphemes {
-			adjusted = append(adjusted, numGraphemes)
+			if len(adjusted) == 0 || numGraphemes > adjusted[len(adjusted)-1] {
+				adjusted = append(adjusted, numGraphemes)
+			}
 			continue
 		}
 		
@@ -415,7 +417,9 @@ func validateAndAdjustBoundaries(boundaries []int, text string, byteOffsets []in
 		
 		// Check if we're at a sentence boundary (looking back for . ! ?)
 		if isSentenceBoundary(text, bytePos) {
-			adjusted = append(adjusted, graphemeBoundary)
+			if len(adjusted) == 0 || graphemeBoundary > adjusted[len(adjusted)-1] {
+				adjusted = append(adjusted, graphemeBoundary)
+			}
 			continue
 		}
 		
@@ -427,7 +431,9 @@ func validateAndAdjustBoundaries(boundaries []int, text string, byteOffsets []in
 				Int("grapheme_boundary", graphemeBoundary).
 				Int("byte_pos", bytePos).
 				Msg("Could not find sentence boundary, using original position")
-			adjusted = append(adjusted, graphemeBoundary)
+			if len(adjusted) == 0 || graphemeBoundary > adjusted[len(adjusted)-1] {
+				adjusted = append(adjusted, graphemeBoundary)
+			}
 			continue
 		}
 		
@@ -439,7 +445,14 @@ func validateAndAdjustBoundaries(boundaries []int, text string, byteOffsets []in
 			Int("original_byte", bytePos).
 			Int("adjusted_byte", newBytePos).
 			Msg("Adjusted boundary to sentence ending")
-		adjusted = append(adjusted, newGrapheme)
+		if len(adjusted) == 0 || newGrapheme > adjusted[len(adjusted)-1] {
+			adjusted = append(adjusted, newGrapheme)
+		}
+	}
+	
+	// Ensure last boundary is the end of the text so the full text is always covered
+	if len(adjusted) == 0 || adjusted[len(adjusted)-1] != numGraphemes {
+		adjusted = append(adjusted, numGraphemes)
 	}
 	
 	return adjusted
