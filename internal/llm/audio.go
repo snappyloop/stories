@@ -45,26 +45,22 @@ func (c *Client) GenerateAudio(ctx context.Context, script, audioType string) (*
 }
 
 // generateAudioUnified uses the unified genai SDK with response_modalities: ["audio"] for TTS.
+// System prompt holds voice/tone instructions; user message is the script, sent as-is.
 func (c *Client) generateAudioUnified(ctx context.Context, script, audioType string) (*Audio, error) {
-	// Build prompt with tone direction
 	toneHint := ttsToneHint(audioType)
-	promptText := script
+	systemPrompt := "You are a TTS model. Speak the text provided by the user."
 	if toneHint != "" {
-		promptText = "[tone: " + toneHint + "] " + script
+		systemPrompt = "You are a TTS model. Use this tone for the narration: " + toneHint + ". Speak the text provided by the user."
 	}
 
 	contents := []*unifiedgenai.Content{
-		{
-			Role: "user",
-			Parts: []*unifiedgenai.Part{
-				unifiedgenai.NewPartFromText(promptText),
-			},
-		},
+		unifiedgenai.NewContentFromText(script, unifiedgenai.RoleUser),
 	}
 
 	temp := float32(1.0)
 	config := &unifiedgenai.GenerateContentConfig{
-		Temperature:        &temp,
+		SystemInstruction: unifiedgenai.NewContentFromText(systemPrompt, unifiedgenai.RoleUser),
+		Temperature:       &temp,
 		ResponseModalities: []string{"audio"},
 		SpeechConfig: &unifiedgenai.SpeechConfig{
 			VoiceConfig: &unifiedgenai.VoiceConfig{

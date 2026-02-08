@@ -21,7 +21,7 @@ func (c *Client) GenerateImagePrompt(ctx context.Context, text, inputType string
 		return c.fallbackImagePrompt(text, inputType), nil
 	}
 
-	// Build style guidance
+	// Build style guidance and system prompt
 	var styleGuidance string
 	switch inputType {
 	case "educational":
@@ -32,15 +32,12 @@ func (c *Client) GenerateImagePrompt(ctx context.Context, text, inputType string
 		styleGuidance = "Create a cinematic, atmospheric scene that captures the mood and setting of the story."
 	}
 
-	prompt := fmt.Sprintf(`You are an expert at creating image generation prompts for AI models like Midjourney or DALL-E.
+	systemPrompt := fmt.Sprintf(`You are an expert at creating image generation prompts for AI models like Midjourney or DALL-E.
 
-Based on the following text, create a detailed, effective image generation prompt.
+Based on the text provided by the user, create a detailed, effective image generation prompt.
 
 Content type: %s
 Style guidance: %s
-
-Text to visualize:
-%s
 
 Generate a concise but detailed image generation prompt (max 150 words).
 Focus on:
@@ -48,10 +45,15 @@ Focus on:
 - Mood, lighting, atmosphere
 - Specific details that would create an effective image
 
-Return ONLY the image prompt, no explanations.`, inputType, styleGuidance, text)
+Return ONLY the image prompt, no explanations.`, inputType, styleGuidance)
 
-	// Call Gemini Pro (or Flash fallback)
-	response, err := llms.GenerateFromSinglePrompt(ctx, model, prompt,
+	messages := []llms.MessageContent{
+		{Role: llms.ChatMessageTypeSystem, Parts: []llms.ContentPart{llms.TextContent{Text: systemPrompt}}},
+		{Role: llms.ChatMessageTypeHuman, Parts: []llms.ContentPart{llms.TextContent{Text: text}}},
+	}
+
+	// Call Gemini (Flash)
+	resp, err := model.GenerateContent(ctx, messages,
 		llms.WithTemperature(0.8),
 		llms.WithMaxTokens(300),
 	)
@@ -60,6 +62,12 @@ Return ONLY the image prompt, no explanations.`, inputType, styleGuidance, text)
 		return c.fallbackImagePrompt(text, inputType), nil
 	}
 
+	if len(resp.Choices) == 0 {
+		log.Warn().Msg("Gemini returned no choices, using fallback")
+		return c.fallbackImagePrompt(text, inputType), nil
+	}
+
+	response := resp.Choices[0].Content
 	logGeminiResponse("GenerateImagePrompt", response)
 
 	imagePrompt := strings.TrimSpace(response)

@@ -61,22 +61,15 @@ func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int
 		return segments, nil
 	}
 
-	prompt := c.buildSegmentPrompt(text, segmentsCount, inputType)
+	systemPrompt := c.buildSegmentSystemPrompt(segmentsCount, inputType)
 
-	// Log segmentation request input
-	if len(prompt) <= maxSegmentInputLogBytes {
-		log.Info().
-			Str("caller", "SegmentText").
-			Int("prompt_len", len(prompt)).
-			Str("segment_request_input", prompt).
-			Msg("SegmentText LLM request input")
-	} else {
-		log.Info().
-			Str("caller", "SegmentText").
-			Int("prompt_len", len(prompt)).
-			Str("segment_request_input", prompt[:maxSegmentInputLogBytes]+"... [truncated]").
-			Msg("SegmentText LLM request input")
-	}
+	// Log segmentation request (system prompt + user message length)
+	log.Info().
+		Str("caller", "SegmentText").
+		Int("system_prompt_len", len(systemPrompt)).
+		Str("segment_system_prompt", systemPrompt).
+		Int("user_text_len", len(text)).
+		Msg("SegmentText LLM request (system + user message)")
 
 	// Try primary (3.0 flash), then fallback (2.5 flash)
 	for _, tier := range []struct {
@@ -90,7 +83,7 @@ func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int
 		if tier.modelName == "" && tier.langModel == nil {
 			continue
 		}
-		segments, err := c.trySegmentWithModel(ctx, tier.name, tier.modelName, tier.langModel, prompt, text, segmentsCount, inputType)
+		segments, err := c.trySegmentWithModel(ctx, tier.name, tier.modelName, tier.langModel, systemPrompt, text, segmentsCount, inputType)
 		if err != nil {
 			log.Warn().Err(err).Str("model_tier", tier.name).Msg("Segment model failed, trying next")
 			continue
@@ -105,8 +98,9 @@ func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int
 	return c.oneSegmentFallback(text), nil
 }
 
-// buildSegmentPrompt builds the segmentation prompt asking for ALL logical boundaries.
-func (c *Client) buildSegmentPrompt(text string, segmentsCount int, inputType string) string {
+// buildSegmentSystemPrompt returns the system prompt for segmentation (instructions only).
+// The text to analyze is sent separately as a user message, as-is.
+func (c *Client) buildSegmentSystemPrompt(segmentsCount int, inputType string) string {
 	var styleGuidance string
 	switch inputType {
 	case "educational":
@@ -121,7 +115,7 @@ func (c *Client) buildSegmentPrompt(text string, segmentsCount int, inputType st
 
 	return fmt.Sprintf(`You are an expert at analyzing text structure and identifying logical segment boundaries.
 
-Task: Identify ALL natural breakpoints in the following text where the content logically divides. %s
+Task: Identify ALL natural breakpoints in the text where the content logically divides. %s
 
 Rules:
 1. Return a list of character positions (indices) where segments should END
@@ -142,8 +136,7 @@ Example for text with 500 characters and 5 natural breakpoints:
 
 This means: segment 1 is chars 0-120, segment 2 is chars 120-245, etc.
 
-TEXT TO ANALYZE:
-%s`, styleGuidance, segmentsCount-1, text)
+A text to analyze will be provided by the user.`, styleGuidance, segmentsCount-1)
 }
 
 // runeToByteOffsets returns a slice where offsets[i] is the byte index of the i-th grapheme cluster
@@ -392,8 +385,9 @@ func segmentResponseSchema() *genai.Schema {
 }
 
 // trySegmentWithModel calls the given model and parses the response into segments. Returns (nil, err) on failure, (segments, nil) on success.
+// System prompt holds instructions; user message is the text to analyze, sent as-is.
 // When genaiClient is available and modelName is set, uses genai with ResponseSchema; otherwise uses langchaingo with JSON MIME type.
-func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, modelName string, langModel llms.Model, prompt, text string, requestedCount int, inputType string) ([]*Segment, error) {
+func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, modelName string, langModel llms.Model, systemPrompt, userText string, requestedCount int, inputType string) ([]*Segment, error) {
 	var response string
 
 	if c.genaiClient != nil && modelName != "" {
@@ -403,16 +397,20 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 		model.SetMaxOutputTokens(2000)
 		model.ResponseMIMEType = "application/json"
 		model.ResponseSchema = segmentResponseSchema()
+		model.SystemInstruction = genai.NewUserContent(genai.Text(systemPrompt))
 
-		resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+		resp, err := model.GenerateContent(ctx, genai.Text(userText))
 		if err != nil {
 			return nil, err
 		}
 		response = c.extractTextFromGenaiResponse(resp)
 	} else if langModel != nil {
-		// Fallback: langchaingo with JSON MIME type (no schema)
-		var err error
-		response, err = llms.GenerateFromSinglePrompt(ctx, langModel, prompt,
+		// Fallback: langchaingo with system + user messages and JSON MIME type (no schema)
+		messages := []llms.MessageContent{
+			{Role: llms.ChatMessageTypeSystem, Parts: []llms.ContentPart{llms.TextContent{Text: systemPrompt}}},
+			{Role: llms.ChatMessageTypeHuman, Parts: []llms.ContentPart{llms.TextContent{Text: userText}}},
+		}
+		resp, err := langModel.GenerateContent(ctx, messages,
 			llms.WithTemperature(0.3),
 			llms.WithMaxTokens(2000),
 			llms.WithResponseMIMEType("application/json"),
@@ -420,6 +418,10 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 		if err != nil {
 			return nil, err
 		}
+		if len(resp.Choices) == 0 {
+			return nil, fmt.Errorf("empty response from model")
+		}
+		response = resp.Choices[0].Content
 	} else {
 		return nil, fmt.Errorf("no segment model available")
 	}
@@ -456,7 +458,7 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 	}
 
 	// LLM returns grapheme indices; convert to byte positions for correct slicing (handles emojis and multi-byte UTF-8).
-	byteOffsets := runeToByteOffsets(text)
+	byteOffsets := runeToByteOffsets(userText)
 	numGraphemes := len(byteOffsets) - 1
 
 	// Validate boundaries
@@ -476,7 +478,7 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 
 	log.Info().
 		Str("caller", "SegmentText").
-		Int("text_bytes", len(text)).
+		Int("text_bytes", len(userText)).
 		Int("text_graphemes", numGraphemes).
 		Int("boundaries_returned", len(result.Boundaries)).
 		Int("requested_segments", requestedCount).
@@ -484,7 +486,7 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 		Msg("LLM returned boundaries")
 
 	// Validate boundaries are at sentence endings (. ! ?)
-	validatedBoundaries := validateAndAdjustBoundaries(result.Boundaries, text, byteOffsets)
+	validatedBoundaries := validateAndAdjustBoundaries(result.Boundaries, userText, byteOffsets)
 
 	log.Info().
 		Str("caller", "SegmentText").
@@ -493,7 +495,7 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 
 	// Cache the validated boundaries for future use
 	if c.boundaryCache != nil {
-		textHash := database.TextHash(text)
+		textHash := database.TextHash(userText)
 		if err := c.boundaryCache.Set(ctx, textHash, validatedBoundaries); err != nil {
 			log.Warn().Err(err).Msg("Failed to cache boundaries")
 		} else {
@@ -505,7 +507,7 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 	}
 
 	// Merge boundaries into requested number of segments
-	segments := mergeBoundariesIntoSegments(validatedBoundaries, byteOffsets, text, requestedCount)
+	segments := mergeBoundariesIntoSegments(validatedBoundaries, byteOffsets, userText, requestedCount)
 
 	log.Info().
 		Str("caller", "SegmentText").

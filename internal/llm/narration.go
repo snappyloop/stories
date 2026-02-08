@@ -17,7 +17,7 @@ func (c *Client) GenerateNarration(ctx context.Context, text, audioType, inputTy
 		Str("input_type", inputType).
 		Msg("Generating narration")
 
-	// Build style guidance and prompt once (shared by Pro and Flash)
+	// Build style guidance and system prompt once (shared by Pro and Flash)
 	var styleGuidance string
 	switch inputType {
 	case "educational":
@@ -40,27 +40,31 @@ func (c *Client) GenerateNarration(ctx context.Context, text, audioType, inputTy
 		audioStyle = "Natural speaking style."
 	}
 
-	prompt := fmt.Sprintf(`Generate a narration script for the following text.
+	systemPrompt := fmt.Sprintf(`Generate a narration script for the text provided by the user.
 
 Style: %s
 Audio format: %s
 
-Original text:
-%s
-
-Generate a natural narration script that would sound good when read aloud. 
+Generate a natural narration script that would sound good when read aloud.
 Make it engaging and appropriate for the content type.
-Return ONLY the narration text, no explanations or formatting.`, styleGuidance, audioStyle, text)
+Return ONLY the narration text, no explanations or formatting.`, styleGuidance, audioStyle)
+
+	messages := []llms.MessageContent{
+		{Role: llms.ChatMessageTypeSystem, Parts: []llms.ContentPart{llms.TextContent{Text: systemPrompt}}},
+		{Role: llms.ChatMessageTypeHuman, Parts: []llms.ContentPart{llms.TextContent{Text: text}}},
+	}
+	opts := []llms.CallOption{
+		llms.WithTemperature(0.7),
+		llms.WithMaxTokens(1000),
+	}
 
 	// Try Gemini 3 Pro first
 	if c.llmPro != nil {
-		response, err := llms.GenerateFromSinglePrompt(ctx, c.llmPro, prompt,
-			llms.WithTemperature(0.7),
-			llms.WithMaxTokens(1000),
-		)
+		resp, err := c.llmPro.GenerateContent(ctx, messages, opts...)
 		if err != nil {
 			log.Warn().Err(err).Msg("Gemini Pro narration failed, trying 2.5 Flash")
-		} else {
+		} else if len(resp.Choices) > 0 {
+			response := resp.Choices[0].Content
 			logGeminiResponse("GenerateNarration", response)
 			narration := strings.TrimSpace(response)
 			if narration != "" {
@@ -73,13 +77,11 @@ Return ONLY the narration text, no explanations or formatting.`, styleGuidance, 
 
 	// Fallback: 2.5 Flash
 	if c.llmFlash != nil {
-		response, err := llms.GenerateFromSinglePrompt(ctx, c.llmFlash, prompt,
-			llms.WithTemperature(0.7),
-			llms.WithMaxTokens(1000),
-		)
+		resp, err := c.llmFlash.GenerateContent(ctx, messages, opts...)
 		if err != nil {
 			log.Warn().Err(err).Msg("Gemini 2.5 Flash narration failed")
-		} else {
+		} else if len(resp.Choices) > 0 {
+			response := resp.Choices[0].Content
 			logGeminiResponse("GenerateNarration", response)
 			narration := strings.TrimSpace(response)
 			if narration != "" {

@@ -79,10 +79,10 @@ type Client struct {
 	modelSegmentFallback string // e.g. gemini-2.5-flash-lite
 	llmFlash             llms.Model
 	llmPro               llms.Model
-	llmSegmentPrimary    llms.Model                       // primary for segmentation
-	llmSegmentFallback   llms.Model                       // fallback for segmentation
-	genaiClient          *genai.Client                    // for image modality and segment schema
-	unifiedClient        *unifiedgenai.Client             // unified genai SDK for TTS
+	llmSegmentPrimary    llms.Model                        // primary for segmentation
+	llmSegmentFallback   llms.Model                        // fallback for segmentation
+	genaiClient          *genai.Client                     // for image modality and segment schema
+	unifiedClient        *unifiedgenai.Client              // unified genai SDK for TTS
 	boundaryCache        *database.BoundaryCacheRepository // cache for segmentation boundaries
 }
 
