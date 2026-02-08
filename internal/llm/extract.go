@@ -42,23 +42,26 @@ func (c *Client) ExtractContent(ctx context.Context, data []byte, mimeType, inpu
 }
 
 // buildExtractionSystemPrompt returns the system prompt for extraction (instructions only).
-// The document or image to summarize is sent by the user as a separate message, as-is.
+// The document or image to extract from is sent by the user as a separate message, as-is.
 func (c *Client) buildExtractionSystemPrompt(inputType, mimeType string) string {
 	fileType := "document"
 	if strings.HasPrefix(mimeType, "image/") {
 		fileType = "image"
 	}
 
-	base := fmt.Sprintf("Summarize the %s provided by the user in your own words. Describe the main content, ideas, and structure. Do not quote or transcribe long passages verbatim; paraphrase and condense so the summary is useful for creating an enriched story version.", fileType)
+	// Ask for the essence: what the picture/document explains or teaches, written as that
+	// explanation itself—not a description of the picture (e.g. no "this set lists", "the second
+	// group centers on"). Output should read like the script or lesson the picture conveys.
+	base := fmt.Sprintf("From the %s provided by the user, extract and output only what it explains or teaches. Do not describe the %s (e.g. do not say \"this graphic shows\", \"the second group centers on\", \"this set lists\"). Instead, write the actual message: the lesson, the vocabulary, the explanation—as if you were teaching it or saying it aloud. Paraphrase in your own words where needed; keep the substance and flow so it is useful for creating an enriched story.", fileType, fileType)
 
 	switch inputType {
 	case "educational":
-		return base + " Focus on the main concepts, facts, and how they are organized. Keep the logical flow clear."
+		return base + " For educational content: write the concepts and facts as you would explain them (e.g. \"Bee is la abeja, worm is el gusano\" not \"This set lists bee (la abeja)...\"). Keep the logical flow."
 	case "financial":
-		return base + " Summarize the main points, figures, and conclusions. Note the presence of any disclaimers or risk warnings without quoting them in full."
+		return base + " For financial content: state the main points, figures, and conclusions as the document presents them. Note any disclaimers or risk warnings briefly."
 	case "fictional":
-		return base + " Summarize the plot, key characters, and story beats in your own words. Capture the tone and main events without copying dialogue or text verbatim."
+		return base + " For fiction: tell the plot, key characters, and story beats in your own words as a narrative, not as a description of what the image contains."
 	default:
-		return base + " Keep the overall structure and meaning clear in your summary."
+		return base + " Keep the overall meaning and flow clear."
 	}
 }
