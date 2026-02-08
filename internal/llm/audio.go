@@ -149,7 +149,7 @@ func (c *Client) generateAudioUnified(ctx context.Context, script, audioType str
 func ttsToneHint(audioType string) string {
 	switch audioType {
 	case "podcast":
-		return "professional and measured, good pacing"
+		return "This is a podcast script with two speakers. Deliver it as a discussion between two voices: use distinct tone or pacing for each speaker so it sounds like a natural back-and-forth conversation. Professional and measured, good pacing."
 	case "free_speech":
 		return "warm, natural and conversational"
 	default:
