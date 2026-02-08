@@ -320,52 +320,51 @@ func (p *JobProcessor) processSegment(ctx context.Context, job *models.Job, seg 
 	// Generate audio (Gemini Pro)
 	audio, err := p.llmClient.GenerateAudio(ctx, script, job.AudioType)
 	if err != nil {
-		log.Error().Err(err).
+		log.Warn().Err(err).
 			Str("job_id", job.ID.String()).
 			Int("segment", idx).
-			Msg("Audio generation failed")
-		p.segmentRepo.UpdateStatus(ctx, job.ID, idx, "failed")
-		return fmt.Errorf("audio generation failed: %w", err)
-	}
+			Msg("TTS API error: skipping audio file/DB; message will appear in job output only")
+		// Do not create any audio file in storage or audio asset in DB; continue to image.
+	} else {
+		log.Debug().
+			Str("job_id", job.ID.String()).
+			Int("segment", idx).
+			Int64("audio_size_bytes", audio.Size).
+			Str("mime_type", audio.MimeType).
+			Msg("Audio from Gemini, uploading to S3")
 
-	log.Debug().
-		Str("job_id", job.ID.String()).
-		Int("segment", idx).
-		Int64("audio_size_bytes", audio.Size).
-		Str("mime_type", audio.MimeType).
-		Msg("Audio from Gemini, uploading to S3")
+		// TTS output is WAV (see GEMINI_INTEGRATION.md). Use actual format so Content-Type matches payload.
+		mimeType := audio.MimeType
+		if mimeType == "" {
+			mimeType = "audio/wav"
+		}
+		ext := audioExtension(mimeType)
+		audioKey := fmt.Sprintf("jobs/%s/segments/%d/audio.%s", job.ID, idx, ext)
+		if err := p.storageClient.Upload(ctx, audioKey, audio.Data, mimeType, audio.Size); err != nil {
+			p.segmentRepo.UpdateStatus(ctx, job.ID, idx, "failed")
+			return fmt.Errorf("audio upload failed: %w", err)
+		}
 
-	// TTS output is WAV (see GEMINI_INTEGRATION.md). Use actual format so Content-Type matches payload.
-	mimeType := audio.MimeType
-	if mimeType == "" {
-		mimeType = "audio/wav"
-	}
-	ext := audioExtension(mimeType)
-	audioKey := fmt.Sprintf("jobs/%s/segments/%d/audio.%s", job.ID, idx, ext)
-	if err := p.storageClient.Upload(ctx, audioKey, audio.Data, mimeType, audio.Size); err != nil {
-		p.segmentRepo.UpdateStatus(ctx, job.ID, idx, "failed")
-		return fmt.Errorf("audio upload failed: %w", err)
-	}
+		// Save audio asset (use DB segment ID for FK)
+		audioAsset := &models.Asset{
+			ID:        uuid.New(),
+			JobID:     job.ID,
+			SegmentID: &segmentID,
+			Kind:      "audio",
+			MimeType:  mimeType,
+			S3Bucket:  p.config.S3Bucket,
+			S3Key:     audioKey,
+			SizeBytes: audio.Size,
+			Meta: map[string]any{
+				"duration": audio.Duration,
+				"model":    audio.Model,
+			},
+			CreatedAt: time.Now(),
+		}
 
-	// Save audio asset (use DB segment ID for FK)
-	audioAsset := &models.Asset{
-		ID:        uuid.New(),
-		JobID:     job.ID,
-		SegmentID: &segmentID,
-		Kind:      "audio",
-		MimeType:  mimeType,
-		S3Bucket:  p.config.S3Bucket,
-		S3Key:     audioKey,
-		SizeBytes: audio.Size,
-		Meta: map[string]any{
-			"duration": audio.Duration,
-			"model":    audio.Model,
-		},
-		CreatedAt: time.Now(),
-	}
-
-	if err := p.assetRepo.Create(ctx, audioAsset); err != nil {
-		return fmt.Errorf("failed to save audio asset: %w", err)
+		if err := p.assetRepo.Create(ctx, audioAsset); err != nil {
+			return fmt.Errorf("failed to save audio asset: %w", err)
+		}
 	}
 
 	// Generate image prompt
@@ -504,6 +503,7 @@ func (p *JobProcessor) generateOutputMarkup(ctx context.Context, jobID uuid.UUID
 		}
 	}
 
+	ttsUnavailableMessage := "TTS is currently unavailable, please try once again later"
 	for _, segment := range segments {
 		markup += fmt.Sprintf("[[SEGMENT id=%s]]\n", segment.ID)
 
@@ -512,6 +512,18 @@ func (p *JobProcessor) generateOutputMarkup(ctx context.Context, jobID uuid.UUID
 		}
 
 		markup += segment.SegmentText + "\n\n"
+
+		// If segment has no audio asset (e.g. TTS failed), add message only to job output
+		hasAudio := false
+		for _, asset := range assetsBySegment[segment.ID] {
+			if asset.Kind == "audio" {
+				hasAudio = true
+				break
+			}
+		}
+		if !hasAudio {
+			markup += ttsUnavailableMessage + "\n\n"
+		}
 
 		// Add asset references
 		for _, asset := range assetsBySegment[segment.ID] {

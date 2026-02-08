@@ -7,18 +7,151 @@
   <title>Job view</title>
   <style>
     * { box-sizing: border-box; }
-    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
-    .segment { margin-bottom: 2rem; padding-bottom: 2rem; border-bottom: 1px solid #eee; }
-    .segment:last-child { border-bottom: none; }
-    .segment audio { display: block; margin-bottom: 0.75rem; width: 100%; }
-    .segment-text { margin: 0.75rem 0; line-height: 1.5; white-space: pre-wrap; }
-    .segment-image { display: block; max-width: 100%; height: auto; margin-top: 0.75rem; border-radius: 6px; }
-    .segment-title { font-size: 1.1rem; margin: 0.5rem 0 0.25rem; }
-    .source { margin-bottom: 2rem; padding: 1rem; background: #f8f8f8; border-radius: 6px; border-left: 4px solid #ccc; }
-    .source h3 { font-size: 0.95rem; margin: 0 0 0.5rem; color: #555; }
-    .source-content { margin: 0; font-size: 0.9rem; white-space: pre-wrap; word-break: break-word; }
-    .fact-check { margin-top: 0.75rem; padding: 0.5rem 0.75rem; background: #f5f5f5; border-left: 3px solid #888; font-size: 0.9rem; color: #444; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      max-width: 640px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      background: var(--view-bg, #fff);
+      color: var(--view-text, #222);
+      line-height: 1.5;
+    }
+    .segment {
+      margin-bottom: 1.5rem;
+      padding: 1.25rem 1.5rem;
+      background: var(--view-card-bg, #fff);
+      border: 1px solid var(--view-border, #eee);
+      border-radius: var(--view-radius, 12px);
+      box-shadow: var(--view-shadow, 0 1px 3px rgba(0,0,0,0.06));
+    }
+    .segment audio {
+      display: block;
+      margin-bottom: 0.75rem;
+      width: 100%;
+      border-radius: 8px;
+    }
+    .segment-text {
+      margin: 0.75rem 0 0;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+    .segment-image {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin-top: 0.75rem;
+      border-radius: var(--view-radius, 12px);
+      border: 1px solid var(--view-border, #eee);
+      box-shadow: var(--view-shadow-img, 0 4px 12px rgba(0,0,0,0.08));
+    }
+    .segment-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin: 0 0 0.35rem;
+      color: var(--view-accent, inherit);
+    }
+    .source {
+      margin-bottom: 2rem;
+      padding: 1.25rem 1.5rem;
+      background: var(--view-source-bg, #f8f8f8);
+      border: 1px solid var(--view-border, #eee);
+      border-radius: var(--view-radius, 12px);
+      border-left: 4px solid var(--view-accent, #ccc);
+      box-shadow: var(--view-shadow, 0 1px 3px rgba(0,0,0,0.06));
+    }
+    .source h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin: 0 0 0.5rem;
+      color: var(--view-muted, #555);
+    }
+    .source-content {
+      margin: 0;
+      font-size: 0.9rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .fact-check {
+      margin-top: 1rem;
+      padding: 0.75rem 1rem;
+      background: var(--view-factcheck-bg, #f5f5f5);
+      border: 1px solid var(--view-border, #eee);
+      border-left: 4px solid var(--view-accent, #888);
+      border-radius: 8px;
+      font-size: 0.9rem;
+      color: var(--view-muted, #444);
+      box-shadow: var(--view-shadow-sm, 0 1px 2px rgba(0,0,0,0.04));
+    }
+    .fact-check-title {
+      display: block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--view-accent, #666);
+      margin-bottom: 0.35rem;
+    }
+    /* Theme: educational — calm, readable */
+    body.job-type-educational {
+      --view-bg: #f0f7ff;
+      --view-text: #1a2d4a;
+      --view-border: #c5d9f0;
+      --view-accent: #2563eb;
+      --view-muted: #475569;
+      --view-source-bg: #e8f0fe;
+      --view-factcheck-bg: #eef4ff;
+      --view-card-bg: #fff;
+      --view-radius: 12px;
+      --view-shadow: 0 2px 8px rgba(37, 99, 235, 0.08);
+      --view-shadow-img: 0 4px 16px rgba(37, 99, 235, 0.12);
+      --view-shadow-sm: 0 1px 3px rgba(37, 99, 235, 0.06);
+    }
+    /* Theme: financial — professional, growth */
+    body.job-type-financial {
+      --view-bg: #f0fdf4;
+      --view-text: #14532d;
+      --view-border: #bbf7d0;
+      --view-accent: #15803d;
+      --view-muted: #166534;
+      --view-source-bg: #dcfce7;
+      --view-factcheck-bg: #ecfdf5;
+      --view-card-bg: #fff;
+      --view-radius: 12px;
+      --view-shadow: 0 2px 8px rgba(21, 128, 61, 0.08);
+      --view-shadow-img: 0 4px 16px rgba(21, 128, 61, 0.12);
+      --view-shadow-sm: 0 1px 3px rgba(21, 128, 61, 0.06);
+    }
+    /* Theme: fictional — creative, narrative */
+    body.job-type-fictional {
+      --view-bg: #faf5ff;
+      --view-text: #3b0764;
+      --view-border: #e9d5ff;
+      --view-accent: #7c3aed;
+      --view-muted: #6b21a8;
+      --view-source-bg: #f3e8ff;
+      --view-factcheck-bg: #f5f3ff;
+      --view-card-bg: #fff;
+      --view-radius: 12px;
+      --view-shadow: 0 2px 8px rgba(124, 58, 237, 0.1);
+      --view-shadow-img: 0 4px 16px rgba(124, 58, 237, 0.14);
+      --view-shadow-sm: 0 1px 3px rgba(124, 58, 237, 0.06);
+    }
+    /* Default theme when type is unknown */
+    body.job-type-default {
+      --view-bg: #f8f9fa;
+      --view-text: #222;
+      --view-border: #e2e6ea;
+      --view-accent: #495057;
+      --view-muted: #555;
+      --view-source-bg: #f8f8f8;
+      --view-factcheck-bg: #f1f3f5;
+      --view-card-bg: #fff;
+      --view-radius: 12px;
+      --view-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+      --view-shadow-img: 0 4px 16px rgba(0, 0, 0, 0.08);
+      --view-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
+    }
   </style>
 </head>
-<body>
+<body class="job-type-{{.JobTypeClass}}">
 {{end}}

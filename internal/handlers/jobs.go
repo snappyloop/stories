@@ -367,7 +367,7 @@ func injectFactChecksIntoHTML(bodyHTML string, factChecks []*models.SegmentFactC
 			continue
 		}
 		escaped := html.EscapeString(fc.FactCheckText)
-		insert := `<div class="fact-check">` + escaped + `</div>`
+		insert := `<div class="fact-check"><span class="fact-check-title">Fact-check notice</span>` + escaped + `</div>`
 		bodyHTML = bodyHTML[:closeIdx] + insert + bodyHTML[closeIdx:]
 	}
 	return bodyHTML
@@ -446,8 +446,22 @@ func (h *Handler) ViewJob(w http.ResponseWriter, r *http.Request) {
 	}
 	bodyHTML = injectFactChecksIntoHTML(bodyHTML, resp.FactChecks)
 
+	jobTypeClass := resp.Job.InputType
+	switch jobTypeClass {
+	case "educational", "financial", "fictional":
+		// use as-is
+	default:
+		jobTypeClass = "default"
+	}
+	headBytes, err := executeTemplateToBytes("view_head", map[string]string{"JobTypeClass": jobTypeClass})
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to render view head")
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
 	var b []byte
-	b = append(b, viewHeadBytes...)
+	b = append(b, headBytes...)
 	b = append(b, bodyHTML...)
 	b = append(b, viewTailBytes...)
 
