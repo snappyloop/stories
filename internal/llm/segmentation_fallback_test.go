@@ -49,8 +49,8 @@ func TestIsListLine(t *testing.T) {
 		{"plus bullet", "+ item", true},
 		{"unicode bullet", "• item", true},
 		{"middle dot", "· item", true},
-		{"indent space", "    indented", false}, // TrimLeft removes spaces, then "indented" is not list
-		{"indent tab", "\tindented", false},
+		{"indent space", "    indented", true},  // leading space/tab counts as list (indentation)
+		{"indent tab", "\tindented", true},
 		{"paren", "(1) item", true},
 		{"bracket", "[x] item", true},
 		{"normal sentence", "This is a normal paragraph.", false},

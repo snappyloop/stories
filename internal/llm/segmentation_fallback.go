@@ -59,6 +59,13 @@ var (
 )
 
 func isListLine(s string) bool {
+	// Detect indentation (leading space/tab) before trimming
+	if s != "" {
+		first, _ := utf8.DecodeRuneInString(s)
+		if first == ' ' || first == '\t' {
+			return true
+		}
+	}
 	s = strings.TrimLeft(s, " \t")
 	if s == "" {
 		return true // all-whitespace counts as continuation
@@ -67,9 +74,9 @@ func isListLine(s string) bool {
 		return true
 	}
 	first, _ := utf8.DecodeRuneInString(s)
-	// Bullets and indentation
+	// Bullets
 	switch first {
-	case ' ', '\t', '-', '*', '•', '·', '+', '‐', '–', '—':
+	case '-', '*', '•', '·', '+', '‐', '–', '—':
 		return true
 	case '(', '[', '●', '○', '▪', '▫':
 		return true
