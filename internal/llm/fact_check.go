@@ -17,10 +17,12 @@ var ErrFactCheckNotConfigured = errors.New("fact-check unavailable: unified AI c
 
 const maxFactCheckLen = 1024 // made larger than requested in case LLM returns more than requested
 
-const factCheckPrompt = `You are a fact-checker. Analyze the following text and check all factual claims against well-known and trusted sources using web search.
+const factCheckSystemPrompt = `You are a fact-checker. Analyze the text and check all factual claims against well-known and trusted sources using web search.
 
 If any fact is incorrect or misleading: briefly describe the issue only (max 512 characters total).
-If all facts are correct: your entire response must be exactly the single character 0. Do not add any explanation, summary, or other text—just 0.`
+If all facts are correct: your entire response must be exactly the single character 0. Do not add any explanation, summary, or other text—just 0.
+
+A text to check will be provided by the user.`
 
 // FactCheckSegment checks the given segment text for factual accuracy using Google Search grounding.
 // Returns empty string if all facts are correct (or model returned "0"), or a short description (up to 1024 chars) otherwise.
@@ -33,8 +35,10 @@ func (c *Client) FactCheckSegment(ctx context.Context, text string) (string, err
 		return "", ErrFactCheckNotConfigured
 	}
 
-	contents := unifiedgenai.Text(factCheckPrompt + "\n\nText to check:\n" + text)
+	// System prompt holds instructions; user message is the text to check, sent as-is.
+	contents := unifiedgenai.Text(text)
 	config := &unifiedgenai.GenerateContentConfig{
+		SystemInstruction: unifiedgenai.NewContentFromText(factCheckSystemPrompt, unifiedgenai.Role("system")),
 		Tools: []*unifiedgenai.Tool{
 			{GoogleSearch: &unifiedgenai.GoogleSearch{}},
 		},
