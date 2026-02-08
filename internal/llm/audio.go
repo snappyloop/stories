@@ -13,6 +13,12 @@ import (
 	unifiedgenai "google.golang.org/genai"
 )
 
+// Podcast speaker names; must match labels in narration script and MultiSpeakerVoiceConfig.
+const (
+	PodcastSpeaker1 = "Speaker 1"
+	PodcastSpeaker2 = "Speaker 2"
+)
+
 // GenerateAudio generates audio from narration script using the unified genai SDK.
 // Uses gemini-2.5-pro-preview-tts with response_modalities: ["audio"] and SpeechConfig.
 // If script is empty, skips TTS and returns placeholder (avoids unnecessary API call and zero-length audio).
@@ -53,30 +59,28 @@ func (c *Client) GenerateAudio(ctx context.Context, script, audioType string) (*
 }
 
 // generateAudioUnified uses the unified genai SDK with response_modalities: ["audio"] for TTS.
-// System prompt holds voice/tone instructions; user message is the script, sent as-is.
+// Single user message only; TTS does not work with system + user messages.
 func (c *Client) generateAudioUnified(ctx context.Context, script, audioType string) (*Audio, error) {
 	toneHint := ttsToneHint(audioType)
-	systemPrompt := "You are a TTS model. Speak the text provided by the user."
+	promptText := script
 	if toneHint != "" {
-		systemPrompt = "You are a TTS model. Use this tone for the narration: " + toneHint + ". Speak the text provided by the user."
+		promptText = "[tone: " + toneHint + "] " + script
 	}
 
 	contents := []*unifiedgenai.Content{
-		unifiedgenai.NewContentFromText(script, unifiedgenai.RoleUser),
+		{
+			Role: "user",
+			Parts: []*unifiedgenai.Part{
+				unifiedgenai.NewPartFromText(promptText),
+			},
+		},
 	}
 
 	temp := float32(1.0)
 	config := &unifiedgenai.GenerateContentConfig{
-		SystemInstruction: unifiedgenai.NewContentFromText(systemPrompt, unifiedgenai.Role("system")),
-		Temperature:       &temp,
+		Temperature:        &temp,
 		ResponseModalities: []string{"audio"},
-		SpeechConfig: &unifiedgenai.SpeechConfig{
-			VoiceConfig: &unifiedgenai.VoiceConfig{
-				PrebuiltVoiceConfig: &unifiedgenai.PrebuiltVoiceConfig{
-					VoiceName: c.ttsVoice,
-				},
-			},
-		},
+		SpeechConfig:       c.buildSpeechConfig(audioType),
 	}
 
 	log.Debug().
@@ -93,11 +97,11 @@ func (c *Client) generateAudioUnified(ctx context.Context, script, audioType str
 		if err != nil {
 			return nil, fmt.Errorf("TTS stream error: %w", err)
 		}
-		if resp.Candidates == nil || len(resp.Candidates) == 0 {
+		if len(resp.Candidates) == 0 {
 			continue
 		}
 		cand := resp.Candidates[0]
-		if cand.Content == nil || cand.Content.Parts == nil {
+		if cand.Content == nil || len(cand.Content.Parts) == 0 {
 			continue
 		}
 		for _, part := range cand.Content.Parts {
@@ -151,6 +155,42 @@ func (c *Client) generateAudioUnified(ctx context.Context, script, audioType str
 	}
 
 	return audio, nil
+}
+
+// buildSpeechConfig returns SpeechConfig: multi-speaker for podcast, single voice otherwise.
+func (c *Client) buildSpeechConfig(audioType string) *unifiedgenai.SpeechConfig {
+	if audioType == "podcast" {
+		// Two speakers; names must match labels in narration script (PodcastSpeaker1, PodcastSpeaker2).
+		return &unifiedgenai.SpeechConfig{
+			MultiSpeakerVoiceConfig: &unifiedgenai.MultiSpeakerVoiceConfig{
+				SpeakerVoiceConfigs: []*unifiedgenai.SpeakerVoiceConfig{
+					{
+						Speaker: PodcastSpeaker1,
+						VoiceConfig: &unifiedgenai.VoiceConfig{
+							PrebuiltVoiceConfig: &unifiedgenai.PrebuiltVoiceConfig{
+								VoiceName: c.ttsVoice,
+							},
+						},
+					},
+					{
+						Speaker: PodcastSpeaker2,
+						VoiceConfig: &unifiedgenai.VoiceConfig{
+							PrebuiltVoiceConfig: &unifiedgenai.PrebuiltVoiceConfig{
+								VoiceName: "Puck",
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+	return &unifiedgenai.SpeechConfig{
+		VoiceConfig: &unifiedgenai.VoiceConfig{
+			PrebuiltVoiceConfig: &unifiedgenai.PrebuiltVoiceConfig{
+				VoiceName: c.ttsVoice,
+			},
+		},
+	}
 }
 
 // ttsToneHint returns a tone hint for TTS based on audio type.
