@@ -12,8 +12,9 @@ var templatesFS embed.FS
 // pageTemplates is the parsed set of all page templates (gtag, index, generation, agents, view_head, view_tail).
 var pageTemplates = mustParseTemplates()
 
-// viewHeadBytes and viewTailBytes are cached output of view_head and view_tail (no dynamic data).
-var viewHeadBytes, viewTailBytes []byte
+// viewTailBytes is cached output of view_tail (no dynamic data).
+// view_head is rendered per-request with job type for theme.
+var viewTailBytes []byte
 
 func mustParseTemplates() *template.Template {
 	t, err := template.New("").ParseFS(templatesFS, "templates/*.tmpl")
@@ -25,10 +26,6 @@ func mustParseTemplates() *template.Template {
 
 func init() {
 	var err error
-	viewHeadBytes, err = executeTemplateToBytes("view_head", nil)
-	if err != nil {
-		panic("view_head: " + err.Error())
-	}
 	viewTailBytes, err = executeTemplateToBytes("view_tail", nil)
 	if err != nil {
 		panic("view_tail: " + err.Error())
