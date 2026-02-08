@@ -33,10 +33,18 @@ func (c *Client) GenerateAudio(ctx context.Context, script, audioType string) (*
 			log.Warn().Err(err).
 				Str("model", c.modelTTS).
 				Int("script_length", len(script)).
-				Msg("TTS generation failed, falling back to placeholder")
-			return c.placeholderAudio(script)
+				Msg("TTS API error, returning error so caller can set segment text and skip file creation")
+			return nil, err
 		}
+		// API can return non-nil audio with no data on errors; treat empty as failure
 		if audio != nil {
+			if err := c.validateAudio(audio); err != nil {
+				log.Warn().Err(err).
+					Str("model", c.modelTTS).
+					Int("script_length", len(script)).
+					Msg("TTS returned empty/invalid audio, treating as error")
+				return nil, fmt.Errorf("TTS returned no usable audio: %w", err)
+			}
 			return audio, nil
 		}
 	}
