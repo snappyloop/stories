@@ -52,6 +52,7 @@ func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int
 		validatedBoundaries := validateAndAdjustBoundaries(cachedBoundaries, text, byteOffsets)
 
 		segments := mergeBoundariesIntoSegments(validatedBoundaries, byteOffsets, text, segmentsCount)
+		c.fillSegmentTitles(ctx, segments)
 
 		log.Info().
 			Str("caller", "SegmentText").
@@ -89,6 +90,7 @@ func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int
 			continue
 		}
 		if segments != nil {
+			c.fillSegmentTitles(ctx, segments)
 			return segments, nil
 		}
 	}
@@ -100,13 +102,16 @@ func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int
 		byteOffsets := runeToByteOffsets(text)
 		validatedBoundaries := validateAndAdjustBoundaries(fallbackBoundaries, text, byteOffsets)
 		segments := mergeBoundariesIntoSegments(validatedBoundaries, byteOffsets, text, segmentsCount)
+		c.fillSegmentTitles(ctx, segments)
 		log.Info().
 			Int("fallback_boundaries", len(validatedBoundaries)).
 			Int("final_segments", len(segments)).
 			Msg("Rule-based segmentation complete (not cached)")
 		return segments, nil
 	}
-	return c.oneSegmentFallback(text), nil
+	segments := c.oneSegmentFallback(text)
+	c.fillSegmentTitles(ctx, segments)
+	return segments, nil
 }
 
 // buildSegmentSystemPrompt returns the system prompt for segmentation (instructions only).
@@ -543,4 +548,63 @@ func (c *Client) oneSegmentFallback(text string) []*Segment {
 		Title:     &title,
 		Text:      text,
 	}}
+}
+
+// GenerateSegmentTitle returns a short, concise title for the given text using gemini-2.5-flash-lite.
+// Output is trimmed; on error returns empty string.
+func (c *Client) GenerateSegmentTitle(ctx context.Context, segmentText string) (string, error) {
+	segmentText = strings.TrimSpace(segmentText)
+	if segmentText == "" {
+		return "", nil
+	}
+
+	prompt := "Output only a short, concise title for the following text. No other text, no quotes, no punctuation at the end. Only the title.\n\n" + segmentText
+
+	var response string
+	if c.genaiClient != nil && c.modelSegmentFallback != "" {
+		model := c.genaiClient.GenerativeModel(c.modelSegmentFallback)
+		model.SetTemperature(0.2)
+		model.SetMaxOutputTokens(64)
+		resp, err := model.GenerateContent(ctx, genai.Text(prompt))
+		if err != nil {
+			return "", err
+		}
+		response = c.extractTextFromGenaiResponse(resp)
+	} else if c.llmSegmentFallback != nil {
+		messages := []llms.MessageContent{
+			{Role: llms.ChatMessageTypeHuman, Parts: []llms.ContentPart{llms.TextContent{Text: prompt}}},
+		}
+		resp, err := c.llmSegmentFallback.GenerateContent(ctx, messages,
+			llms.WithTemperature(0.2),
+			llms.WithMaxTokens(64),
+		)
+		if err != nil {
+			return "", err
+		}
+		if len(resp.Choices) == 0 {
+			return "", fmt.Errorf("empty response from title model")
+		}
+		response = resp.Choices[0].Content
+	} else {
+		return "", fmt.Errorf("no title model available (gemini-2.5-flash-lite)")
+	}
+
+	title := strings.TrimSpace(response)
+	title = strings.Trim(title, "\"'")
+	return title, nil
+}
+
+// fillSegmentTitles replaces "Part x" titles with LLM-generated titles using gemini-2.5-flash-lite.
+// On error for a segment, the existing title is left unchanged.
+func (c *Client) fillSegmentTitles(ctx context.Context, segments []*Segment) {
+	for i, seg := range segments {
+		t, err := c.GenerateSegmentTitle(ctx, seg.Text)
+		if err != nil {
+			log.Warn().Err(err).Int("segment", i+1).Msg("GenerateSegmentTitle failed, keeping Part N title")
+			continue
+		}
+		if t != "" {
+			seg.Title = &t
+		}
+	}
 }

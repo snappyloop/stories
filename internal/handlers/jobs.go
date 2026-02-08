@@ -367,7 +367,7 @@ func injectFactChecksIntoHTML(bodyHTML string, factChecks []*models.SegmentFactC
 			continue
 		}
 		escaped := html.EscapeString(fc.FactCheckText)
-		insert := `<div class="fact-check">` + escaped + `</div>`
+		insert := `<div class="fact-check"><span class="fact-check-title">Fact-check notice</span>` + escaped + `</div>`
 		bodyHTML = bodyHTML[:closeIdx] + insert + bodyHTML[closeIdx:]
 	}
 	return bodyHTML
