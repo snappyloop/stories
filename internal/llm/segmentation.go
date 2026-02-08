@@ -397,7 +397,10 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 		model.SetMaxOutputTokens(2000)
 		model.ResponseMIMEType = "application/json"
 		model.ResponseSchema = segmentResponseSchema()
-		model.SystemInstruction = genai.NewUserContent(genai.Text(systemPrompt))
+		model.SystemInstruction = &genai.Content{
+			Parts: []genai.Part{genai.Text(systemPrompt)},
+			Role:  "system",
+		}
 
 		resp, err := model.GenerateContent(ctx, genai.Text(userText))
 		if err != nil {

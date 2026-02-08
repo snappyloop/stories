@@ -59,7 +59,7 @@ func (c *Client) generateAudioUnified(ctx context.Context, script, audioType str
 
 	temp := float32(1.0)
 	config := &unifiedgenai.GenerateContentConfig{
-		SystemInstruction: unifiedgenai.NewContentFromText(systemPrompt, unifiedgenai.RoleUser),
+		SystemInstruction: unifiedgenai.NewContentFromText(systemPrompt, unifiedgenai.Role("system")),
 		Temperature:       &temp,
 		ResponseModalities: []string{"audio"},
 		SpeechConfig: &unifiedgenai.SpeechConfig{

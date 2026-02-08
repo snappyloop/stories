@@ -16,7 +16,10 @@ func (c *Client) ExtractContent(ctx context.Context, data []byte, mimeType, inpu
 	}
 
 	model := c.genaiClient.GenerativeModel(c.modelPro)
-	model.SystemInstruction = genai.NewUserContent(genai.Text(c.buildExtractionSystemPrompt(inputType, mimeType)))
+	model.SystemInstruction = &genai.Content{
+		Parts: []genai.Part{genai.Text(c.buildExtractionSystemPrompt(inputType, mimeType))},
+		Role:  "system",
+	}
 
 	resp, err := model.GenerateContent(ctx, genai.Blob{MIMEType: mimeType, Data: data})
 	if err != nil {

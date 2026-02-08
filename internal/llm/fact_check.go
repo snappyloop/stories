@@ -38,7 +38,7 @@ func (c *Client) FactCheckSegment(ctx context.Context, text string) (string, err
 	// System prompt holds instructions; user message is the text to check, sent as-is.
 	contents := unifiedgenai.Text(text)
 	config := &unifiedgenai.GenerateContentConfig{
-		SystemInstruction: unifiedgenai.NewContentFromText(factCheckSystemPrompt, unifiedgenai.RoleUser),
+		SystemInstruction: unifiedgenai.NewContentFromText(factCheckSystemPrompt, unifiedgenai.Role("system")),
 		Tools: []*unifiedgenai.Tool{
 			{GoogleSearch: &unifiedgenai.GoogleSearch{}},
 		},
