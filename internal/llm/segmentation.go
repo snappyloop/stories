@@ -93,8 +93,19 @@ func (c *Client) SegmentText(ctx context.Context, text string, segmentsCount int
 		}
 	}
 
-	// No response from both: create one segment made of the whole text
-	log.Info().Msg("No valid response from segment models, using single-segment fallback")
+	// No response from both: use rule-based fallback (do not cache)
+	log.Info().Msg("No valid response from segment models, using rule-based fallback")
+	fallbackBoundaries := fallbackSegmentBoundaries(text)
+	if len(fallbackBoundaries) > 0 {
+		byteOffsets := runeToByteOffsets(text)
+		validatedBoundaries := validateAndAdjustBoundaries(fallbackBoundaries, text, byteOffsets)
+		segments := mergeBoundariesIntoSegments(validatedBoundaries, byteOffsets, text, segmentsCount)
+		log.Info().
+			Int("fallback_boundaries", len(validatedBoundaries)).
+			Int("final_segments", len(segments)).
+			Msg("Rule-based segmentation complete (not cached)")
+		return segments, nil
+	}
 	return c.oneSegmentFallback(text), nil
 }
 
@@ -522,7 +533,7 @@ func (c *Client) trySegmentWithModel(ctx context.Context, modelTier string, mode
 	return segments, nil
 }
 
-// oneSegmentFallback returns a single segment containing the entire text (used when both segment models fail).
+// oneSegmentFallback returns a single segment containing the entire text (used when both segment models and rule-based fallback fail).
 func (c *Client) oneSegmentFallback(text string) []*Segment {
 	title := "Part 1"
 	return []*Segment{{

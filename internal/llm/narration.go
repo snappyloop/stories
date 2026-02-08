@@ -35,7 +35,7 @@ func (c *Client) GenerateNarration(ctx context.Context, text, audioType, inputTy
 	case "free_speech":
 		audioStyle = "Natural speaking style, as if explaining to a friend."
 	case "podcast":
-		audioStyle = "Professional podcast style with good pacing and emphasis."
+		audioStyle = "Professional podcast style: write as a discussion between two distinct voices (e.g. host and co-host). Use clear speaker labels such as 'Host:' and 'Co-host:' (or 'Speaker 1:' and 'Speaker 2:') before each line so it reads as a natural two-person conversation, with good pacing and emphasis."
 	default:
 		audioStyle = "Natural speaking style."
 	}
@@ -55,7 +55,7 @@ Return ONLY the narration text, no explanations or formatting.`, styleGuidance, 
 	}
 	opts := []llms.CallOption{
 		llms.WithTemperature(0.7),
-		llms.WithMaxTokens(1000),
+		llms.WithMaxTokens(3000),
 	}
 
 	// Try Gemini 3 Pro first
