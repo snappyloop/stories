@@ -55,7 +55,7 @@ Return ONLY the narration text, no explanations or formatting.`, styleGuidance, 
 	}
 	opts := []llms.CallOption{
 		llms.WithTemperature(0.7),
-		llms.WithMaxTokens(1000),
+		llms.WithMaxTokens(3000),
 	}
 
 	// Try Gemini 3 Pro first
